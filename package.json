@@ -1,0 +1,15 @@
+{
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "autoprefixer": "^10.4.20",
+    "prisma": "^6.3.0",
+    "tsx": "^4.19.2"
+  },
+  "scripts": {
+    "dev": "nodemon --exec tsx src/index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.3.0",
+    "bcryptjs": "^2.4.3"
+  }
+}

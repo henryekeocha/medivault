@@ -1,0 +1,312 @@
+openapi: 3.0.0
+info:
+  title: Medical Image Sharing API
+  version: 1.0.0
+  description: API for secure medical image sharing and collaboration
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Development server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [User, Admin]
+        isActive:
+          type: boolean
+        twoFactorEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    Image:
+      type: object
+      properties:
+        id:
+          type: integer
+        filename:
+          type: string
+        s3Url:
+          type: string
+        metadata:
+          type: object
+        createdAt:
+          type: string
+          format: date-time
+        annotations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Annotation'
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: integer
+        content:
+          type: string
+        isEdited:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        sender:
+          $ref: '#/components/schemas/User'
+        recipient:
+          $ref: '#/components/schemas/User'
+
+    Settings:
+      type: object
+      properties:
+        emailNotifications:
+          type: boolean
+        theme:
+          type: string
+        language:
+          type: string
+
+paths:
+  /users:
+    get:
+      summary: Get all users
+      security:
+        - BearerAuth: []
+      tags:
+        - Users
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - Admin only
+
+  /users/profile:
+    get:
+      summary: Get user profile
+      security:
+        - BearerAuth: []
+      tags:
+        - Users
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+
+    patch:
+      summary: Update user profile
+      security:
+        - BearerAuth: []
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                email:
+                  type: string
+      responses:
+        '200':
+          description: Updated profile
+        '401':
+          description: Unauthorized
+
+  /images:
+    post:
+      summary: Upload new image
+      security:
+        - BearerAuth: []
+      tags:
+        - Images
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+                metadata:
+                  type: object
+      responses:
+        '201':
+          description: Image uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Image'
+        '401':
+          description: Unauthorized
+
+    get:
+      summary: Get all user images
+      security:
+        - BearerAuth: []
+      tags:
+        - Images
+      responses:
+        '200':
+          description: List of images
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Image'
+        '401':
+          description: Unauthorized
+
+  /images/{id}/share:
+    post:
+      summary: Share image
+      security:
+        - BearerAuth: []
+      tags:
+        - Images
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipientEmail:
+                  type: string
+                expiresIn:
+                  type: integer
+                  description: Expiration time in seconds
+      responses:
+        '200':
+          description: Image shared successfully
+        '401':
+          description: Unauthorized
+        '404':
+          description: Image not found
+
+  /messages:
+    post:
+      summary: Send message
+      security:
+        - BearerAuth: []
+      tags:
+        - Messages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipientId:
+                  type: integer
+                content:
+                  type: string
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          description: Unauthorized
+
+  /settings:
+    get:
+      summary: Get user settings
+      security:
+        - BearerAuth: []
+      tags:
+        - Settings
+      responses:
+        '200':
+          description: User settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          description: Unauthorized
+
+    patch:
+      summary: Update settings
+      security:
+        - BearerAuth: []
+      tags:
+        - Settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Settings'
+      responses:
+        '200':
+          description: Settings updated
+        '401':
+          description: Unauthorized
+
+  /settings/2fa:
+    patch:
+      summary: Toggle 2FA
+      security:
+        - BearerAuth: []
+      tags:
+        - Settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enable:
+                  type: boolean
+                token:
+                  type: string
+      responses:
+        '200':
+          description: 2FA status updated
+        '401':
+          description: Unauthorized 

@@ -1,0 +1,72 @@
+{
+  "name": "medical-image-sharing-backend",
+  "version": "1.0.0",
+  "description": "Backend for medical image sharing application",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "NODE_OPTIONS=\"--loader ts-node/esm\" nodemon src/index.ts",
+    "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "seed": "NODE_OPTIONS=\"--loader ts-node/esm\" ts-node src/seed.ts"
+  },
+  "keywords": [
+    "medical",
+    "imaging",
+    "dicom",
+    "sharing",
+    "collaboration"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
+    "@types/qrcode": "^1.5.5",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
+    "jsonwebtoken": "^9.0.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.0",
+    "otplib": "^12.0.0",
+    "pg": "^8.13.1",
+    "qrcode": "^1.5.4",
+    "reflect-metadata": "^0.2.2",
+    "swagger-ui-express": "^5.0.0",
+    "typeorm": "^0.3.20",
+    "yamljs": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.0",
+    "@types/cors": "^2.8.0",
+    "@types/express": "^4.17.0",
+    "@types/jest": "^29.0.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/multer": "^1.4.0",
+    "@types/node": "^20.17.16",
+    "@types/nodemailer": "^6.4.0",
+    "@types/supertest": "^2.0.0",
+    "@types/swagger-ui-express": "^4.1.0",
+    "@types/yamljs": "^0.2.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "nodemon": "^3.0.0",
+    "supertest": "^6.0.0",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

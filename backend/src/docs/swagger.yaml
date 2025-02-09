@@ -1,0 +1,311 @@
+openapi: 3.0.0
+info:
+  title: Medical Image Sharing API
+  version: 1.0.0
+  description: API for secure medical image sharing and collaboration
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+    
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        action:
+          type: string
+        details:
+          type: object
+        timestamp:
+          type: string
+          format: date-time
+        user:
+          type: object
+          properties:
+            id:
+              type: integer
+            username:
+              type: string
+            email:
+              type: string
+
+    SystemSettings:
+      type: object
+      properties:
+        id:
+          type: integer
+        maxUploadSize:
+          type: integer
+          description: Maximum upload size in MB
+        allowedFileTypes:
+          type: string
+          description: Comma-separated list of allowed file extensions
+        maxShareDuration:
+          type: integer
+          description: Maximum share duration in days
+        requireEmailVerification:
+          type: boolean
+        enforcePasswordComplexity:
+          type: boolean
+        enableAuditLog:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+
+    StorageStats:
+      type: object
+      properties:
+        totalUsers:
+          type: integer
+        totalImages:
+          type: integer
+        totalStorageBytes:
+          type: integer
+        totalStorageGB:
+          type: string
+        userStats:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              username:
+                type: string
+              email:
+                type: string
+              imageCount:
+                type: integer
+              totalStorage:
+                type: integer
+
+paths:
+  /audit:
+    get:
+      summary: Get all audit logs
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+          description: Page number
+        - in: query
+          name: limit
+          schema:
+            type: integer
+          description: Items per page
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      logs:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AuditLog'
+                      pagination:
+                        type: object
+                        properties:
+                          page:
+                            type: integer
+                          limit:
+                            type: integer
+                          total:
+                            type: integer
+                          pages:
+                            type: integer
+
+  /audit/{id}:
+    get:
+      summary: Get a specific audit log
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      log:
+                        $ref: '#/components/schemas/AuditLog'
+
+  /audit/search:
+    get:
+      summary: Search audit logs
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: startDate
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endDate
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: userId
+          schema:
+            type: integer
+        - in: query
+          name: action
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      logs:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AuditLog'
+                      pagination:
+                        type: object
+                        properties:
+                          page:
+                            type: integer
+                          limit:
+                            type: integer
+                          total:
+                            type: integer
+                          pages:
+                            type: integer
+
+  /system-settings:
+    get:
+      summary: Get system settings
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      settings:
+                        $ref: '#/components/schemas/SystemSettings'
+    
+    patch:
+      summary: Update system settings
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                maxStoragePerUser:
+                  type: integer
+                maxFileSize:
+                  type: integer
+                allowedFileTypes:
+                  type: string
+                retentionPeriod:
+                  type: integer
+                autoDeleteExpired:
+                  type: boolean
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      settings:
+                        $ref: '#/components/schemas/SystemSettings'
+
+  /system-settings/storage:
+    get:
+      summary: Get storage statistics
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/StorageStats' 
