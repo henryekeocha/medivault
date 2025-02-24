@@ -1,0 +1,386 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Global Styles */
+body {
+  font-family: Arial, Verdana, Roboto, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+}
+
+/* Navbar Styles */
+.navbar {
+  transition: background-color 0.3s ease;
+}
+
+.light-theme .navbar {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.dark-theme .navbar {
+  background-color: rgba(42, 42, 42, 0.8);
+}
+
+.navbar-link {
+  transition: color 0.3s ease, transform 0.2s ease;
+}
+
+.navbar-link:hover {
+  transform: translateY(-2px);
+}
+
+.light-theme .navbar-link:hover {
+  color: #009688;
+}
+
+.dark-theme .navbar-link:hover {
+  color: #4db6ac;
+}
+
+/* Light Theme */
+.light-theme {
+  background-color: #f4f4f4;
+  color: #1a1a1a;
+}
+
+.light-theme a {
+  color: #005aff;
+}
+
+.light-theme .cta-button {
+  background-color: #009688;
+  color: #ffffff;
+  border: none;
+}
+
+.light-theme .bordered {
+  border-color: #d1d1d1;
+}
+
+/* Dark Theme */
+.dark-theme {
+  background-color: #121212;
+  color: #e0e0e0;
+}
+
+.dark-theme a {
+  color: #64b5f6;
+}
+
+.dark-theme .cta-button {
+  background-color: #4db6ac;
+  color: #121212;
+  border: none;
+}
+
+.dark-theme .bordered {
+  border-color: #616161;
+}
+
+/* UI & Accessibility Enhancements */
+.interactive {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.screen-reader-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+*:focus {
+  outline: 2px solid #005aff;
+}
+
+@media (prefers-contrast: high) {
+  body {
+    background-color: #000;
+    color: #fff;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Responsive Layout */
+@media (max-width: 768px) {
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  h1 {
+    font-size: 2rem;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  h1 {
+    font-size: 1.75rem;
+  }
+
+  h2 {
+    font-size: 1.25rem;
+  }
+}
+
+/* Ensure proper color contrast for the logo */
+.light-theme .logo-text {
+  color: #1a1a1a;
+}
+
+.dark-theme .logo-text {
+  color: #e0e0e0;
+}
+
+/* Add a transition for smooth theme changes */
+body,
+a,
+button {
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* Add cursor style for draggable theme picker */
+.handle {
+  cursor: move;
+}
+
+/* Theme-specific styles for sections */
+.light-theme .bg-muted\/50 {
+  background-color: rgba(244, 244, 244, 0.8);
+}
+
+.dark-theme .bg-muted\/50 {
+  background-color: rgba(28, 28, 28, 0.8);
+}
+
+.light-theme .text-muted-foreground {
+  color: #555;
+}
+
+.dark-theme .text-muted-foreground {
+  color: #bbb;
+}
+
+.light-theme .bordered {
+  border-color: #e0e0e0;
+}
+
+.dark-theme .bordered {
+  border-color: #444;
+}
+
+/* Ensure proper contrast for headings in both themes */
+.light-theme h1,
+.light-theme h2,
+.light-theme h3,
+.light-theme h4 {
+  color: #1a1a1a;
+}
+
+.dark-theme h1,
+.dark-theme h2,
+.dark-theme h3,
+.dark-theme h4 {
+  color: #f0f0f0;
+}
+
+/* Adjust accordion styles for better contrast */
+.light-theme .accordion-item {
+  border-color: #d1d1d1;
+}
+
+.dark-theme .accordion-item {
+  border-color: #444;
+}
+
+.light-theme .accordion-trigger {
+  color: #1a1a1a;
+}
+
+.dark-theme .accordion-trigger {
+  color: #f0f0f0;
+}
+
+.light-theme .accordion-content {
+  color: #333;
+}
+
+.dark-theme .accordion-content {
+  color: #ddd;
+}
+
+.bg-muted {
+  background-color: hsl(var(--bg-muted));
+}
+
+/* Login and Sign Up button styles */
+.login-button,
+.signup-button {
+  transition: background-color 0.3s, color 0.3s, border-color 0.3s, box-shadow 0.3s;
+}
+
+.light-theme .login-button {
+  background-color: transparent;
+  color: #1a1a1a;
+  border: 1px solid #1a1a1a;
+}
+
+.light-theme .login-button:hover {
+  background-color: #009688;
+  color: #ffffff;
+  border-color: #009688;
+  box-shadow: 0 0 10px rgba(0, 150, 136, 0.5);
+}
+
+.light-theme .signup-button {
+  background-color: #009688;
+  color: #ffffff;
+  border: none;
+}
+
+.light-theme .signup-button:hover {
+  background-color: #00796b;
+  box-shadow: 0 0 10px rgba(0, 150, 136, 0.5);
+}
+
+.dark-theme .login-button {
+  background-color: transparent;
+  color: #e0e0e0;
+  border: 1px solid #e0e0e0;
+}
+
+.dark-theme .login-button:hover {
+  background-color: #4db6ac;
+  color: #121212;
+  border-color: #4db6ac;
+  box-shadow: 0 0 10px rgba(77, 182, 172, 0.5);
+}
+
+.dark-theme .signup-button {
+  background-color: #4db6ac;
+  color: #121212;
+  border: none;
+}
+
+.dark-theme .signup-button:hover {
+  background-color: #26a69a;
+  box-shadow: 0 0 10px rgba(77, 182, 172, 0.5);
+}
+
+/* Key Features Card Styles */
+.feature-card {
+  transition: background-color 0.3s ease, transform 0.3s ease;
+}
+
+.light-theme .feature-card {
+  background-color: #ffffff;
+  color: #1a1a1a;
+}
+
+.light-theme .feature-card:hover {
+  background-color: #f0f0f0;
+  transform: translateY(-5px);
+}
+
+.dark-theme .feature-card {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+}
+
+.dark-theme .feature-card:hover {
+  background-color: #3a3a3a;
+  transform: translateY(-5px);
+}
+
+.feature-card .feature-icon {
+  transition: color 0.3s ease;
+}
+
+.light-theme .feature-card:hover .feature-icon {
+  color: #009688;
+}
+
+.dark-theme .feature-card:hover .feature-icon {
+  color: #4db6ac;
+}
+
