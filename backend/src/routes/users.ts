@@ -1,28 +1,31 @@
-import express from 'express';
-import { protect, restrictTo } from '../middleware/auth.js';
-import {
-  getAllUsers,
-  getUser,
-  updateUser,
-  deleteUser,
-  updateProfile,
-  getProfile,
-} from '../controllers/user.controller.js';
+import { Router } from 'express';
+import { protect } from '../middleware/auth.js';
+import { restrictTo } from '../middleware/auth.js';
+import { userController } from '../controllers/user.controller.js';
+import { Role } from '@prisma/client';
+import type { RequestHandler } from 'express';
 
-const router = express.Router();
+const router = Router();
 
-// Protected routes
-router.use(protect);
+// Apply protection middleware to all routes
+router.use(protect as RequestHandler);
 
-// User profile routes
-router.get('/profile', getProfile);
-router.patch('/profile', updateProfile);
+// Profile routes - available to all authenticated users
+router.route('/profile')
+  .get(userController.getProfile as RequestHandler)
+  .put(userController.updateProfile as RequestHandler);
 
-// Admin only routes
-router.use(restrictTo('Admin'));
-router.get('/', getAllUsers);
-router.get('/:id', getUser);
-router.patch('/:id', updateUser);
-router.delete('/:id', deleteUser);
+// Restrict all user management routes to Admin
+router.use(restrictTo(Role.ADMIN) as RequestHandler);
+
+// User management routes
+router.route('/')
+  .get(userController.getAllUsers as RequestHandler)
+  .post(userController.createUser as RequestHandler);
+
+router.route('/:id')
+  .get(userController.getUser as RequestHandler)
+  .put(userController.updateUser as RequestHandler)
+  .delete(userController.deleteUser as RequestHandler);
 
 export default router; 

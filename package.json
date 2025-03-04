@@ -1,15 +1,36 @@
 {
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/fabric": "^5.3.10",
     "autoprefixer": "^10.4.20",
     "prisma": "^6.3.0",
     "tsx": "^4.19.2"
   },
   "scripts": {
-    "dev": "nodemon --exec tsx src/index.ts"
+    "dev": "next dev",
+    "start": "next start",
+    "build": "next build",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "type-check": "node scripts/type-check.js",
+    "property-check": "node scripts/property-consistency-check.js",
+    "responsive-check": "node scripts/responsive-check.js",
+    "qa": "npm run type-check && npm run property-check && npm run responsive-check",
+    "qa:responsive": "npm run responsive-check",
+    "qa:properties": "npm run property-check"
   },
   "dependencies": {
     "@prisma/client": "^6.3.0",
-    "bcryptjs": "^2.4.3"
+    "@tensorflow/tfjs": "^4.17.0",
+    "@types/bcrypt": "^5.0.2",
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
+    "lucide-react": "^0.475.0",
+    "next-auth": "^4.24.11",
+    "openai": "^4.85.4",
+    "react-markdown": "^10.0.0",
+    "react-quill": "^2.0.0",
+    "sharp": "^0.33.5"
   }
 }

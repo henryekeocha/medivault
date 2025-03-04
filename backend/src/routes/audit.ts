@@ -1,19 +1,23 @@
-import express from 'express';
-import { protect, restrictTo } from '../middleware/auth.js';
-import {
-  getAuditLogs,
-  getAuditLog,
-  searchAuditLogs,
-} from '../controllers/audit.controller.js';
+import { Router } from 'express';
+import { protect } from '../middleware/auth.js';
+import { restrictTo } from '../middleware/auth.js';
+import { auditController } from '../controllers/audit.controller.js';
+import { Role } from '@prisma/client';
+import type { RequestHandler } from 'express';
 
-const router = express.Router();
+const router = Router();
 
-// Protected routes - Admin only
-router.use(protect);
-router.use(restrictTo('Admin'));
+// Apply protection middleware to all routes
+router.use(protect as RequestHandler);
 
-router.get('/', getAuditLogs);
-router.get('/search', searchAuditLogs);
-router.get('/:id', getAuditLog);
+// Restrict all audit routes to Admin
+router.use(restrictTo(Role.ADMIN) as RequestHandler);
+
+// Audit log routes
+router.route('/')
+  .get(auditController.getAuditLogs as RequestHandler);
+
+router.route('/:id')
+  .get(auditController.getAuditLog as RequestHandler);
 
 export default router; 

@@ -1,114 +1,80 @@
-import { Request, Response } from 'express';
-import { AppDataSource } from '../config/database.js';
+import { Request, Response, NextFunction } from 'express';
+import { prisma } from '../lib/prisma.js';
 import { catchAsync } from '../utils/catchAsync.js';
-import { AppError } from '../middleware/errorHandler.js';
+import { AppError } from '../utils/appError.js';
 import { validatePaginationParams, validateDateRange } from '../utils/validators.js';
-import { AuditLog } from '../entities/AuditLog.js';
-import { Between } from 'typeorm';
 
-const auditLogRepository = AppDataSource.getRepository(AuditLog);
+class AuditController {
+  async getAuditLogs(req: Request, res: Response, next: NextFunction) {
+    const { page = 1, limit = 10, startDate, endDate, userId, action, resourceType } = req.query;
+    
+    const where = {
+      ...(startDate && { timestamp: { gte: new Date(startDate as string) } }),
+      ...(endDate && { timestamp: { lte: new Date(endDate as string) } }),
+      ...(userId && { userId: userId as string }),
+      ...(action && { action: action as string }),
+      ...(resourceType && { resourceType: resourceType as string })
+    };
 
-/**
- * Get all audit logs with pagination
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
- * @returns {Promise<void>} - Returns paginated audit logs
- * @throws {AppError} - Throws if there's an error retrieving logs
- */
-export const getAuditLogs = catchAsync(async (req: Request, res: Response) => {
-  const { page, limit } = validatePaginationParams(
-    req.query.page as string,
-    req.query.limit as string
-  );
+    const [logs, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        skip: (Number(page) - 1) * Number(limit),
+        take: Number(limit),
+        orderBy: { timestamp: 'desc' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true
+            }
+          }
+        }
+      }),
+      prisma.auditLog.count({ where })
+    ]);
 
-  const [logs, total] = await auditLogRepository.findAndCount({
-    skip: (page - 1) * limit,
-    take: limit,
-    relations: {
-      user: true
-    },
-    select: {
-      user: {
-        id: true,
-        username: true,
-        email: true
+    res.status(200).json({
+      status: 'success',
+      data: {
+        logs,
+        pagination: {
+          total,
+          page: Number(page),
+          pages: Math.ceil(total / Number(limit)),
+          limit: Number(limit)
+        }
       }
-    },
-    order: {
-      timestamp: 'DESC'
-    }
-  });
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      logs,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
-    },
-  });
-});
-
-/**
- * Get a single audit log by ID
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
- * @returns {Promise<void>} - Returns the requested audit log
- * @throws {AppError} - Throws if log is not found
- */
-export const getAuditLog = catchAsync(async (req: Request, res: Response) => {
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 10;
-  const startDate = req.query.startDate ? new Date(req.query.startDate as string) : new Date(0);
-  const endDate = req.query.endDate ? new Date(req.query.endDate as string) : new Date();
-  const action = req.query.action as string;
-  const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
-
-  const where: any = {
-    timestamp: Between(startDate, endDate)
-  };
-
-  if (action) {
-    where.action = action;
+    });
   }
 
-  if (userId) {
-    where.userId = userId;
-  }
-
-  const [auditLogs, total] = await auditLogRepository.findAndCount({
-    where,
-    relations: {
-      user: true
-    },
-    select: {
-      user: {
-        id: true,
-        email: true,
-        username: true
+  async getAuditLog(req: Request, res: Response, next: NextFunction) {
+    const log = await prisma.auditLog.findUnique({
+      where: { id: req.params.id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true
+          }
+        }
       }
-    },
-    skip: (page - 1) * limit,
-    take: limit,
-    order: {
-      timestamp: 'DESC'
-    }
-  });
+    });
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      auditLogs,
-      total,
-      page,
-      pages: Math.ceil(total / limit)
+    if (!log) {
+      return next(new AppError('Audit log not found', 404));
     }
-  });
-});
+
+    res.status(200).json({
+      status: 'success',
+      data: log
+    });
+  }
+}
+
+export const auditController = new AuditController();
 
 /**
  * Search audit logs with filters
@@ -126,33 +92,38 @@ export const searchAuditLogs = catchAsync(async (req: Request, res: Response) =>
     req.query.startDate as string,
     req.query.endDate as string
   );
-  const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
+  const userId = req.query.userId as string;
   const action = req.query.action as string;
 
-  const where: any = {
+  const where = {
     ...(userId && { userId }),
     ...(action && { action }),
-    timestamp: Between(start, end)
+    timestamp: {
+      gte: start,
+      lte: end
+    }
   };
 
-  const [logs, total] = await auditLogRepository.findAndCount({
-    where,
-    skip: (page - 1) * limit,
-    take: limit,
-    relations: {
-      user: true
-    },
-    select: {
-      user: {
-        id: true,
-        username: true,
-        email: true
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true
+          }
+        }
+      },
+      orderBy: {
+        timestamp: 'desc'
       }
-    },
-    order: {
-      timestamp: 'DESC'
-    }
-  });
+    }),
+    prisma.auditLog.count({ where })
+  ]);
 
   res.status(200).json({
     status: 'success',
@@ -165,5 +136,45 @@ export const searchAuditLogs = catchAsync(async (req: Request, res: Response) =>
         pages: Math.ceil(total / limit),
       },
     },
+  });
+});
+
+/**
+ * Create a new audit log entry
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ * @returns {Promise<void>} - Returns the created audit log
+ * @throws {AppError} - Throws if there's an error creating the log
+ */
+export const createAuditLog = catchAsync(async (req: Request, res: Response) => {
+  const { userId, action, details } = req.body;
+
+  if (!userId || !action) {
+    throw new AppError('User ID and action are required', 400);
+  }
+
+  const auditLog = await prisma.auditLog.create({
+    data: {
+      userId,
+      action,
+      details: details || null,
+      timestamp: new Date()
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          email: true
+        }
+      }
+    }
+  });
+
+  res.status(201).json({
+    status: 'success',
+    data: {
+      auditLog
+    }
   });
 }); 

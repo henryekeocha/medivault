@@ -8,6 +8,7 @@ import {
   updateMessage,
   getConversations,
 } from '../controllers/message.controller.js';
+import { RequestHandler } from 'express';
 
 const router = express.Router();
 
@@ -15,11 +16,11 @@ const router = express.Router();
 router.use(protect);
 
 // Message routes
-router.post('/', sendMessage);
-router.get('/', getMessages);
-router.get('/conversations', getConversations);
-router.get('/:id', getMessage);
-router.patch('/:id', updateMessage);
-router.delete('/:id', deleteMessage);
+router.post('/', sendMessage as RequestHandler);
+router.get('/', getMessages as RequestHandler);
+router.get('/conversations', getConversations as RequestHandler);
+router.get('/:id', getMessage as RequestHandler);
+router.patch('/:id', updateMessage as RequestHandler);
+router.delete('/:id', deleteMessage as RequestHandler);
 
 export default router; 

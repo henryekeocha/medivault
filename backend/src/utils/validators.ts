@@ -1,5 +1,5 @@
 import { Request } from 'express';
-import { AppError } from '../middleware/errorHandler.js';
+import { AppError } from './appError.js';
 
 export const validateEmail = (email: string): boolean => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

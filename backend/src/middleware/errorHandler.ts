@@ -1,27 +1,21 @@
 import { Request, Response, NextFunction } from 'express';
-import { QueryFailedError, EntityNotFoundError } from 'typeorm';
-
-export class AppError extends Error {
-  statusCode: number;
-  status: string;
-  isOperational: boolean;
-
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.statusCode = statusCode;
-    this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
-  }
-}
+import { AppError } from '../utils/appError.js';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { ZodError } from 'zod';
 
 export const errorHandler = (
-  err: Error | AppError | QueryFailedError,
+  err: Error | AppError | PrismaClientKnownRequestError | ZodError,
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
+  // Log all errors with timestamp and request information
+  console.error(`[ERROR] ${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  console.error(`Request body: ${JSON.stringify(req.body)}`);
+  console.error(`Error type: ${err.constructor.name}`);
+  console.error(`Error message: ${err.message}`);
+  console.error(`Stack trace: ${err.stack}`);
+
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
       status: err.status,
@@ -29,29 +23,88 @@ export const errorHandler = (
     });
   }
 
-  if (err instanceof QueryFailedError) {
-    // Handle TypeORM errors
-    const pgError = err as any;
-    if (pgError.code === '23505') { // unique violation
-      return res.status(400).json({
-        status: 'fail',
-        message: 'A record with this value already exists.',
-      });
+  if (err instanceof PrismaClientKnownRequestError) {
+    // Handle Prisma-specific errors
+    console.error(`Prisma Error Code: ${err.code}, Meta: ${JSON.stringify(err.meta)}`);
+    switch (err.code) {
+      case 'P2002':
+        return res.status(409).json({
+          status: 'fail',
+          message: 'A record with this data already exists.',
+          details: err.meta
+        });
+      case 'P2025':
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Record not found.',
+          details: err.meta
+        });
+      case 'P2003':
+        return res.status(400).json({
+          status: 'fail',
+          message: 'Related record not found.',
+          details: err.meta
+        });
+      case 'P2001':
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Record does not exist.',
+          details: err.meta
+        });
+      default:
+        console.error('Prisma Error:', err);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Database operation failed.',
+          code: err.code,
+          details: err.meta
+        });
     }
   }
 
-  if (err instanceof EntityNotFoundError) {
-    return res.status(404).json({
+  // Handle validation errors
+  if (err instanceof ZodError) {
+    const validationErrors = err.errors.map(e => ({
+      field: e.path.join('.'),
+      message: e.message
+    }));
+    return res.status(400).json({
+      status: 'error',
+      message: 'Validation failed',
+      errors: validationErrors
+    });
+  }
+
+  // Handle JWT errors
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({
       status: 'fail',
-      message: 'Record not found.',
+      message: 'Invalid token. Please log in again!'
+    });
+  }
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Your token has expired! Please log in again.'
+    });
+  }
+
+  // Development error response
+  if (process.env.NODE_ENV === 'development') {
+    return res.status(500).json({
+      status: 'error',
+      error: err,
+      message: err.message,
+      stack: err.stack
     });
   }
 
   // Log unexpected errors
-  console.error('ERROR 💥', err);
+  console.error('Unexpected Error:', err);
 
+  // Production error response
   return res.status(500).json({
     status: 'error',
-    message: 'Something went wrong',
+    message: 'Something went wrong!',
   });
 }; 

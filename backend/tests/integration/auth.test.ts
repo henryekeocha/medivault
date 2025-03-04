@@ -1,120 +1,110 @@
-import { describe, it, beforeAll, afterAll, expect } from '@jest/globals';
+import { describe, it, beforeEach, afterAll, expect } from '@jest/globals';
 import request from 'supertest';
 import app from '../../src/app.js';
-import { AppDataSource } from '../../src/config/database.js';
-import { User } from '../../src/entities/User.js';
-import { UserRole } from '../../src/entities/User.js';
-import bcrypt from 'bcryptjs';
+import { prisma } from '../../src/lib/prisma.js';
+import { hashPassword } from '../../src/utils/auth.js';
 
 describe('Authentication', () => {
-  beforeAll(async () => {
-    // Initialize database connection
-    await AppDataSource.initialize();
-    
-    // Clear users table
-    const userRepository = AppDataSource.getRepository(User);
-    await userRepository.clear();
-
-    // Create test user
-    const testUser = new User();
-    testUser.email = 'test@example.com';
-    testUser.username = 'testuser';
-    testUser.password = await bcrypt.hash('Test123!@#', 12);
-    testUser.role = UserRole.Patient;
-
-    await userRepository.save(testUser);
+  beforeEach(async () => {
+    // Clear the database before each test
+    await prisma.user.deleteMany();
   });
 
   afterAll(async () => {
-    const userRepository = AppDataSource.getRepository(User);
-    await userRepository.clear();
-    await AppDataSource.destroy();
+    await prisma.$disconnect();
   });
 
-  describe('POST /api/v1/auth/login', () => {
-    it('should login with valid credentials', async () => {
-      const res = await request(app)
-        .post('/api/v1/auth/login')
-        .send({
-          email: 'test@example.com',
-          password: 'Test123!@#',
-        });
-
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('token');
-      expect(res.body.data.user).toHaveProperty('email', 'test@example.com');
-    });
-
-    it('should not login with invalid password', async () => {
-      const res = await request(app)
-        .post('/api/v1/auth/login')
-        .send({
-          email: 'test@example.com',
-          password: 'wrongpassword',
-        });
-
-      expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty('status', 'fail');
-    });
-  });
-
-  describe('POST /api/v1/auth/register', () => {
+  describe('POST /api/auth/register', () => {
     it('should register a new user', async () => {
-      const res = await request(app)
-        .post('/api/v1/auth/register')
-        .send({
-          email: 'newuser@example.com',
-          username: 'newuser',
-          password: 'NewUser123!@#',
-        });
-
-      expect(res.status).toBe(201);
-      expect(res.body.data.user).toHaveProperty('email', 'newuser@example.com');
-      expect(res.body).toHaveProperty('token');
-    });
-
-    it('should not register with existing email', async () => {
-      const res = await request(app)
-        .post('/api/v1/auth/register')
+      const response = await request(app)
+        .post('/api/auth/register')
         .send({
           email: 'test@example.com',
-          username: 'anotheruser',
-          password: 'Test123!@#',
+          password: 'Password123!',
+          name: 'Test User',
+          role: 'PATIENT'
         });
 
-      expect(res.status).toBe(400);
-      expect(res.body).toHaveProperty('status', 'fail');
+      expect(response.status).toBe(201);
+      expect(response.body).toHaveProperty('token');
+      expect(response.body.user).toHaveProperty('id');
+      expect(response.body.user.email).toBe('test@example.com');
+    });
+
+    it('should not register a user with existing email', async () => {
+      // Create a user first
+      await prisma.user.create({
+        data: {
+          email: 'test@example.com',
+          password: await hashPassword('Password123!'),
+          name: 'Test User',
+          role: 'PATIENT'
+        }
+      });
+
+      const response = await request(app)
+        .post('/api/auth/register')
+        .send({
+          email: 'test@example.com',
+          password: 'Password123!',
+          name: 'Another User',
+          role: 'PATIENT'
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('message');
     });
   });
 
-  describe('GET /api/v1/auth/me', () => {
-    let token: string;
+  describe('POST /api/auth/login', () => {
+    beforeEach(async () => {
+      // Create a test user before each test
+      await prisma.user.create({
+        data: {
+          email: 'test@example.com',
+          password: await hashPassword('Password123!'),
+          name: 'Test User',
+          role: 'PATIENT'
+        }
+      });
+    });
 
-    beforeAll(async () => {
-      const res = await request(app)
-        .post('/api/v1/auth/login')
+    it('should login with correct credentials', async () => {
+      const response = await request(app)
+        .post('/api/auth/login')
         .send({
           email: 'test@example.com',
-          password: 'Test123!@#',
+          password: 'Password123!'
         });
 
-      token = res.body.token;
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('token');
+      expect(response.body.user).toHaveProperty('id');
+      expect(response.body.user.email).toBe('test@example.com');
     });
 
-    it('should get current user profile with valid token', async () => {
-      const res = await request(app)
-        .get('/api/v1/auth/me')
-        .set('Authorization', `Bearer ${token}`);
+    it('should not login with incorrect password', async () => {
+      const response = await request(app)
+        .post('/api/auth/login')
+        .send({
+          email: 'test@example.com',
+          password: 'WrongPassword123!'
+        });
 
-      expect(res.status).toBe(200);
-      expect(res.body.data.user).toHaveProperty('email', 'test@example.com');
+      expect(response.status).toBe(401);
+      expect(response.body).toHaveProperty('message');
     });
 
-    it('should not get profile without token', async () => {
-      const res = await request(app).get('/api/v1/auth/me');
+    it('should not login with non-existent email', async () => {
+      const response = await request(app)
+        .post('/api/auth/login')
+        .send({
+          email: 'nonexistent@example.com',
+          password: 'Password123!'
+        });
 
-      expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty('status', 'fail');
+      expect(response.status).toBe(401);
+      expect(response.body).toHaveProperty('message');
     });
   });
 }); 

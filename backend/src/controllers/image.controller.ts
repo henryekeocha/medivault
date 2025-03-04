@@ -1,17 +1,13 @@
 import { Request, Response } from 'express';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { AppDataSource } from '../config/database.js';
 import { catchAsync } from '../utils/catchAsync.js';
-import { AppError } from '../middleware/errorHandler.js';
-import { Image } from '../entities/Image.js';
-import { Share } from '../entities/Share.js';
-import { Annotation } from '../entities/Annotation.js';
+import { AppError } from '../utils/appError.js';
+import { prisma } from '../lib/prisma.js';
+import { ImageStatus, ImageType } from '@prisma/client';
 import crypto from 'crypto';
-
-const imageRepository = AppDataSource.getRepository(Image);
-const shareRepository = AppDataSource.getRepository(Share);
-const annotationRepository = AppDataSource.getRepository(Annotation);
+import { AuthenticatedRequest } from '../types/auth.js';
+import { AnnotationType } from '@prisma/client';
 
 // Initialize S3 client
 const s3Client = new S3Client({
@@ -23,16 +19,16 @@ const s3Client = new S3Client({
 });
 
 // Upload image
-export const uploadImage = catchAsync(async (req: Request, res: Response) => {
+export const uploadImage = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
   }
 
-  const { metadata } = req.body;
+  const { metadata, type = ImageType.OTHER } = req.body;
   const parsedMetadata = JSON.parse(metadata || '{}');
 
   // Generate unique S3 key
-  const s3Key = `${req.user!.id}/${Date.now()}-${req.file.originalname}`;
+  const s3Key = `${req.user.id}/${Date.now()}-${req.file.originalname}`;
 
   // Upload to S3
   await s3Client.send(
@@ -55,15 +51,24 @@ export const uploadImage = catchAsync(async (req: Request, res: Response) => {
   );
 
   // Save to database
-  const image = imageRepository.create({
-    userId: req.user!.id,
-    filename: req.file.originalname,
-    s3Key,
-    s3Url,
-    metadata: parsedMetadata,
+  const image = await prisma.image.create({
+    data: {
+      userId: req.user.id,
+      filename: req.file.originalname,
+      fileType: req.file.mimetype,
+      fileSize: req.file.size,
+      type: type as ImageType,
+      status: ImageStatus.PROCESSING,
+      metadata: parsedMetadata,
+      s3Key,
+      s3Url,
+      uploadDate: new Date(),
+      processingStarted: new Date(),
+    },
+    include: {
+      annotations: true,
+    }
   });
-
-  await imageRepository.save(image);
 
   res.status(201).json({
     status: 'success',
@@ -74,12 +79,12 @@ export const uploadImage = catchAsync(async (req: Request, res: Response) => {
 });
 
 // Get all images for user
-export const getImages = catchAsync(async (req: Request, res: Response) => {
-  const images = await imageRepository.find({
+export const getImages = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  const images = await prisma.image.findMany({
     where: {
-      userId: req.user!.id,
+      userId: req.user.id,
     },
-    relations: {
+    include: {
       annotations: true,
     },
   });
@@ -93,12 +98,12 @@ export const getImages = catchAsync(async (req: Request, res: Response) => {
 });
 
 // Get single image
-export const getImage = catchAsync(async (req: Request, res: Response) => {
-  const image = await imageRepository.findOne({
+export const getImage = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
-    relations: {
+    include: {
       annotations: true,
     },
   });
@@ -108,7 +113,7 @@ export const getImage = catchAsync(async (req: Request, res: Response) => {
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
@@ -121,10 +126,10 @@ export const getImage = catchAsync(async (req: Request, res: Response) => {
 });
 
 // Delete image
-export const deleteImage = catchAsync(async (req: Request, res: Response) => {
-  const image = await imageRepository.findOne({
+export const deleteImage = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
   });
 
@@ -133,7 +138,7 @@ export const deleteImage = catchAsync(async (req: Request, res: Response) => {
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
@@ -146,7 +151,11 @@ export const deleteImage = catchAsync(async (req: Request, res: Response) => {
   );
 
   // Delete from database
-  await imageRepository.remove(image);
+  await prisma.image.delete({
+    where: {
+      id: req.params.id,
+    },
+  });
 
   res.status(204).json({
     status: 'success',
@@ -155,12 +164,12 @@ export const deleteImage = catchAsync(async (req: Request, res: Response) => {
 });
 
 // Update image metadata
-export const updateImageMetadata = catchAsync(async (req: Request, res: Response) => {
+export const updateImageMetadata = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
   const { metadata } = req.body;
 
-  const image = await imageRepository.findOne({
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
   });
 
@@ -169,28 +178,34 @@ export const updateImageMetadata = catchAsync(async (req: Request, res: Response
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
-  image.metadata = JSON.parse(metadata);
-  await imageRepository.save(image);
+  const updatedImage = await prisma.image.update({
+    where: {
+      id: req.params.id,
+    },
+    data: {
+      metadata: JSON.parse(metadata),
+    },
+  });
 
   res.status(200).json({
     status: 'success',
     data: {
-      image,
+      image: updatedImage,
     },
   });
 });
 
 // Share image
-export const shareImage = catchAsync(async (req: Request, res: Response) => {
+export const shareImage = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
   const { expiresIn, recipientEmail } = req.body;
 
-  const image = await imageRepository.findOne({
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
   });
 
@@ -199,7 +214,7 @@ export const shareImage = catchAsync(async (req: Request, res: Response) => {
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
@@ -207,14 +222,15 @@ export const shareImage = catchAsync(async (req: Request, res: Response) => {
   const token = crypto.randomBytes(32).toString('hex');
 
   // Create share record
-  const share = shareRepository.create({
-    imageId: image.id,
-    token,
-    expiresAt: new Date(Date.now() + expiresIn * 1000),
-    recipientEmail,
+  const share = await prisma.share.create({
+    data: {
+      imageId: image.id,
+      token,
+      expiresAt: new Date(Date.now() + expiresIn * 1000),
+      recipientEmail,
+      sharedByUserId: req.user.id,
+    },
   });
-
-  await shareRepository.save(share);
 
   res.status(200).json({
     status: 'success',
@@ -228,21 +244,20 @@ export const shareImage = catchAsync(async (req: Request, res: Response) => {
 export const getSharedImage = catchAsync(async (req: Request, res: Response) => {
   const { token } = req.params;
 
-  const share = await shareRepository.findOne({
+  const share = await prisma.share.findFirst({
     where: {
       token,
+      expiresAt: {
+        gt: new Date(),
+      },
     },
-    relations: {
+    include: {
       image: true,
     },
   });
 
   if (!share) {
-    throw new AppError('Invalid share token', 404);
-  }
-
-  if (share.expiresAt < new Date()) {
-    throw new AppError('Share link has expired', 400);
+    throw new AppError('Share link invalid or expired', 404);
   }
 
   res.status(200).json({
@@ -254,12 +269,12 @@ export const getSharedImage = catchAsync(async (req: Request, res: Response) => 
 });
 
 // Add annotation
-export const addAnnotation = catchAsync(async (req: Request, res: Response) => {
+export const addAnnotation = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
   const { x, y, text } = req.body;
 
-  const image = await imageRepository.findOne({
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
   });
 
@@ -268,18 +283,19 @@ export const addAnnotation = catchAsync(async (req: Request, res: Response) => {
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
-  const annotation = annotationRepository.create({
-    imageId: image.id,
-    x,
-    y,
-    text,
+  const annotation = await prisma.annotation.create({
+    data: {
+      imageId: image.id,
+      content: JSON.stringify({ x, y, text }),
+      coordinates: { x, y },
+      userId: req.user.id,
+      type: AnnotationType.TEXT,
+    },
   });
-
-  await annotationRepository.save(annotation);
 
   res.status(201).json({
     status: 'success',
@@ -290,12 +306,12 @@ export const addAnnotation = catchAsync(async (req: Request, res: Response) => {
 });
 
 // Get annotations
-export const getAnnotations = catchAsync(async (req: Request, res: Response) => {
-  const image = await imageRepository.findOne({
+export const getAnnotations = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
-    relations: {
+    include: {
       annotations: true,
     },
   });
@@ -305,7 +321,7 @@ export const getAnnotations = catchAsync(async (req: Request, res: Response) => 
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
@@ -318,10 +334,10 @@ export const getAnnotations = catchAsync(async (req: Request, res: Response) => 
 });
 
 // Delete annotation
-export const deleteAnnotation = catchAsync(async (req: Request, res: Response) => {
-  const image = await imageRepository.findOne({
+export const deleteAnnotation = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  const image = await prisma.image.findUnique({
     where: {
-      id: parseInt(req.params.id),
+      id: req.params.id,
     },
   });
 
@@ -330,13 +346,13 @@ export const deleteAnnotation = catchAsync(async (req: Request, res: Response) =
   }
 
   // Check ownership
-  if (image.userId !== req.user!.id) {
+  if (image.userId !== req.user.id) {
     throw new AppError('Not authorized', 403);
   }
 
-  const annotation = await annotationRepository.findOne({
+  const annotation = await prisma.annotation.findUnique({
     where: {
-      id: parseInt(req.params.annotationId),
+      id: req.params.annotationId,
       imageId: image.id,
     },
   });
@@ -345,7 +361,11 @@ export const deleteAnnotation = catchAsync(async (req: Request, res: Response) =
     throw new AppError('Annotation not found', 404);
   }
 
-  await annotationRepository.remove(annotation);
+  await prisma.annotation.delete({
+    where: {
+      id: annotation.id,
+    },
+  });
 
   res.status(204).json({
     status: 'success',

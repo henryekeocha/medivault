@@ -1,22 +1,21 @@
-import express from 'express';
-import { protect, restrictTo } from '../middleware/auth.js';
-import {
-  getSystemSettings,
-  updateSystemSettings,
-  getStorageStats,
-} from '../controllers/settings.controller.js';
+import { Router } from 'express';
+import { protect } from '../middleware/auth.js';
+import { restrictTo } from '../middleware/auth.js';
+import { settingsController } from '../controllers/settings.controller.js';
+import { Role } from '@prisma/client';
+import type { RequestHandler } from 'express';
 
-const router = express.Router();
+const router = Router();
 
-// Protect all routes after this middleware
-router.use(protect);
-router.use(restrictTo('admin'));
+// Apply protection middleware to all routes
+router.use(protect as RequestHandler);
 
-router
-  .route('/')
-  .get(getSystemSettings)
-  .patch(updateSystemSettings);
+// Restrict all settings routes to Admin
+router.use(restrictTo(Role.ADMIN) as RequestHandler);
 
-router.get('/storage', getStorageStats);
+// System settings routes
+router.route('/')
+  .get(settingsController.getSystemSettings as RequestHandler)
+  .put(settingsController.updateSystemSettings as RequestHandler);
 
 export default router; 
