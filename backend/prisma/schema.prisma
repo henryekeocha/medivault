@@ -8,44 +8,44 @@ datasource db {
 }
 
 model User {
-  id                    String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id                    String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   name                  String
-  email                 String              @unique
-  username              String?             @unique
+  email                 String                @unique
+  username              String?               @unique
   password              String
-  role                  Role                @default(PATIENT)
+  role                  Role                  @default(PATIENT)
   specialty             ProviderSpecialty?
   emailVerified         DateTime?
   image                 String?
-  isActive              Boolean             @default(true)
-  twoFactorEnabled      Boolean             @default(false)
+  isActive              Boolean               @default(true)
+  twoFactorEnabled      Boolean               @default(false)
   twoFactorSecret       String?
   lastLoginAt           DateTime?
   lastLoginIp           String?
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
-  backupCodes           String[]
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
   annotations           Annotation[]
-  appointmentsAsDr      Appointment[]       @relation("Doctor")
-  appointments          Appointment[]       @relation("Patient")
+  appointmentsAsDr      Appointment[]         @relation("Doctor")
+  appointments          Appointment[]         @relation("Patient")
   auditLogs             AuditLog[]
   chatSessions          ChatSession[]
   fileAccessLogs        FileAccessLog[]
   healthMetrics         HealthMetric[]
-  metricsByProvider     HealthMetric[]      @relation("MetricProvider")
+  metricsByProvider     HealthMetric[]        @relation("MetricProvider")
   images                Image[]
   medicalRecords        MedicalRecord[]
-  receivedMessages      Message[]           @relation("MessageReceiver")
-  sentMessages          Message[]           @relation("MessageSender")
+  receivedMessages      Message[]             @relation("MessageReceiver")
+  sentMessages          Message[]             @relation("MessageSender")
   notifications         Notification[]
-  patientsAsDr          PatientProvider[]   @relation("Doctor")
-  providers             PatientProvider[]   @relation("Patient")
+  patientsAsDr          PatientProvider[]     @relation("Doctor")
+  providers             PatientProvider[]     @relation("Patient")
   prescriptions         Prescription[]
-  prescriptionsProvided Prescription[]      @relation("PrescriptionProvider")
+  prescriptionsProvided Prescription[]        @relation("PrescriptionProvider")
   providerAnalytics     ProviderAnalytics[]
+  ProviderVerification  ProviderVerification?
   securityLogs          SecurityLog[]
-  sharedByMe            Share[]             @relation("SharedBy")
-  sharedWithMe          Share[]             @relation("SharedWith")
+  sharedByMe            Share[]               @relation("SharedBy")
+  sharedWithMe          Share[]               @relation("SharedWith")
   storageUsage          StorageUsage[]
   systemLogs            SystemLog[]
   activities            UserActivity[]
@@ -78,19 +78,6 @@ model UserSettings {
   @@index([userId])
 }
 
-model SystemSettings {
-  id                    String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  maintenanceMode       Boolean  @default(false)
-  maintenanceMessage    String?
-  allowNewRegistrations Boolean  @default(true)
-  maxUploadSize         BigInt   @default(10485760)
-  allowedFileTypes      String[] @default(["image/jpeg", "image/png", "image/dicom"])
-  defaultStorageQuota   BigInt   @default(5368709120)
-  smtpConfigured        Boolean  @default(false)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-}
-
 model SecurityLog {
   id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   userId     String   @db.Uuid
@@ -109,7 +96,8 @@ model SecurityLog {
 model Image {
   id                String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   filename          String
-  fileType          String
+  fileType          String               @default("application/dicom")
+  fileExtension     String               @default(".dcm")
   fileSize          Int
   uploadDate        DateTime             @default(now())
   metadata          Json?
@@ -287,21 +275,22 @@ model MedicalRecord {
 }
 
 model HealthMetric {
-  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id         String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type       HealthMetricType
   value      Float
   unit       String?
-  timestamp  DateTime @default(now())
+  timestamp  DateTime         @default(now())
   notes      String?
   metadata   Json?
-  patientId  String   @db.Uuid
-  providerId String?  @db.Uuid
-  type       String
-  patient    User     @relation(fields: [patientId], references: [id])
-  provider   User?    @relation("MetricProvider", fields: [providerId], references: [id])
+  patientId  String           @db.Uuid
+  providerId String?          @db.Uuid
+  patient    User             @relation(fields: [patientId], references: [id])
+  provider   User?            @relation("MetricProvider", fields: [providerId], references: [id])
 
   @@index([patientId])
   @@index([providerId])
   @@index([timestamp])
+  @@index([type])
 }
 
 model Prescription {
@@ -426,6 +415,45 @@ model FileAccessLog {
   @@index([accessTimestamp])
 }
 
+model Analytics {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type      String
+  metric    String
+  value     Float
+  timestamp DateTime @default(now())
+  metadata  Json?
+
+  @@index([timestamp])
+  @@index([type])
+}
+
+model ProviderVerification {
+  id                    String             @id
+  licenseNumber         String
+  licenseState          String
+  licenseExpiryDate     DateTime
+  specialtyName         String?
+  identityDocumentS3Key String?
+  licenseDocumentS3Key  String?
+  selfieS3Key           String?
+  verificationStatus    VerificationStatus @default(PENDING)
+  verifiedAt            DateTime?
+  rejectionReason       String?
+  rejectedAt            DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime
+  lastVerificationDate  DateTime?
+  nextVerificationDate  DateTime?
+  verifiedBy            String?
+  notes                 String?
+  providerId            String             @unique @db.Uuid
+  User                  User               @relation(fields: [providerId], references: [id])
+
+  @@index([licenseNumber])
+  @@index([providerId])
+  @@index([verificationStatus])
+}
+
 enum Role {
   PATIENT
   PROVIDER
@@ -454,15 +482,14 @@ enum ShareType {
 
 enum SharePermission {
   VIEW
-  COMMENT
   EDIT
+  FULL
 }
 
 enum AnnotationType {
   MARKER
   MEASUREMENT
-  TEXT
-  DRAWING
+  NOTE
 }
 
 enum NotificationType {
@@ -471,21 +498,13 @@ enum NotificationType {
   ANNOTATION_ADDED
   SECURITY_ALERT
   SYSTEM_UPDATE
-  UPLOAD_COMPLETE
-  FILE_SHARED
-  FILE_DOWNLOADED
-  FILE_DELETED
-  PROCESSING_ERROR
-  APPOINTMENT_CREATED
-  APPOINTMENT_COMPLETED
-  APPOINTMENT_CANCELLED
-  APPOINTMENT_NO_SHOW
 }
 
 enum PatientStatus {
   ACTIVE
   INACTIVE
-  PENDING
+  PENDING_REVIEW
+  ARCHIVED
 }
 
 enum AppointmentStatus {
@@ -501,5 +520,55 @@ enum ProviderSpecialty {
   CARDIOLOGY
   NEUROLOGY
   ORTHOPEDICS
+  ONCOLOGY
+  GASTROENTEROLOGY
+  PEDIATRICS
+  INTERNAL_MEDICINE
+  FAMILY_MEDICINE
+  EMERGENCY_MEDICINE
+  OBSTETRICS_GYNECOLOGY
+  DERMATOLOGY
+  OPHTHALMOLOGY
+  PSYCHIATRY
+  UROLOGY
+  OTOLARYNGOLOGY
+  ANESTHESIOLOGY
+  PATHOLOGY
+  NUCLEAR_MEDICINE
+  PHYSICAL_MEDICINE
+  PLASTIC_SURGERY
+  GENERAL_SURGERY
+  VASCULAR_SURGERY
+  THORACIC_SURGERY
+  NEPHROLOGY
   OTHER
+}
+
+enum ChatMessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum ChatMessageType {
+  USER
+  BOT
+  SYSTEM
+}
+
+enum HealthMetricType {
+  VITAL_SIGNS
+  LAB_RESULTS
+  MEDICATION_ADHERENCE
+  APPOINTMENT_ATTENDANCE
+  IMAGING_FREQUENCY
+  PROVIDER_INTERACTION
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
 }

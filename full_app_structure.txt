@@ -59,6 +59,7 @@
 │   │   │   └── prisma.ts
 │   │   ├── middleware
 │   │   │   ├── auth.ts
+│   │   │   ├── cognito-auth.ts
 │   │   │   ├── encryption.ts
 │   │   │   ├── errorHandler.ts
 │   │   │   ├── hipaaLogger.ts
@@ -70,6 +71,12 @@
 │   │   │   ├── analytics.ts
 │   │   │   ├── appointments.ts
 │   │   │   ├── audit.ts
+│   │   │   ├── auth
+│   │   │   │   ├── devices.ts
+│   │   │   │   ├── mfa.ts
+│   │   │   │   ├── session.ts
+│   │   │   │   ├── social-login.ts
+│   │   │   │   └── user.ts
 │   │   │   ├── auth.ts
 │   │   │   ├── chatbot.ts
 │   │   │   ├── files.ts
@@ -83,11 +90,23 @@
 │   │   │   ├── system.settings.ts
 │   │   │   └── users.ts
 │   │   ├── scripts
+│   │   │   ├── migrate-users-to-cognito.ts
 │   │   │   └── updateUserIds.ts
 │   │   ├── services
 │   │   │   ├── ai.service.ts
 │   │   │   ├── analytics.service.ts
 │   │   │   ├── appointment.service.ts
+│   │   │   ├── auth
+│   │   │   │   ├── cognito-jwt-verifier.ts
+│   │   │   │   ├── mfa-service.ts
+│   │   │   │   └── token-service.ts
+│   │   │   ├── aws
+│   │   │   │   ├── cognito-config.ts
+│   │   │   │   ├── cognito-mfa-service.ts
+│   │   │   │   ├── cognito-service.ts
+│   │   │   │   ├── device-tracking.ts
+│   │   │   │   ├── s3-utils.ts
+│   │   │   │   └── social-identity-provider.ts
 │   │   │   ├── email.service.ts
 │   │   │   ├── file.service.ts
 │   │   │   ├── image-analysis.service.ts
@@ -112,15 +131,25 @@
 │   │   └── setup.ts
 │   ├── tsconfig.json
 │   └── uploads
+├── check-db-enums.js
+├── create-simple-user.js
 ├── full_app_structure.txt
 ├── jest.config.js
 ├── jest.setup.js
 ├── medical-image-sharing
+│   ├── README-test-users.md
 │   ├── README.md
+│   ├── aws
+│   │   └── cloudtrail-setup.yaml
 │   ├── docs
+│   │   ├── AWS-CLOUDTRAIL-DEPLOYMENT.md
+│   │   ├── HIPAA-AUDIT-LOGGING.md
 │   │   ├── api-endpoints.md
 │   │   ├── api-integration-testing.md
 │   │   ├── appointment-system.md
+│   │   ├── cognito-frontend-backend-integration.md
+│   │   ├── cognito-integration.md
+│   │   ├── cognito-migration-plan.md
 │   │   ├── component-api-mapping.md
 │   │   ├── error-handling-audit-summary.md
 │   │   ├── error-handling-checklist.md
@@ -160,9 +189,13 @@
 │   │   ├── window.svg
 │   │   └── workflow-image.png
 │   ├── scripts
+│   │   ├── create-test-users.js
+│   │   ├── create-test-users.ts
 │   │   ├── property-consistency-check.js
 │   │   ├── responsive-check.js
-│   │   └── type-check.js
+│   │   ├── test-audit-logger.ts
+│   │   ├── type-check.js
+│   │   └── update-imports.sh
 │   ├── src
 │   │   ├── app
 │   │   │   ├── (protected)
@@ -192,6 +225,8 @@
 │   │   │   │   │   ├── stats
 │   │   │   │   │   │   └── page.tsx
 │   │   │   │   │   ├── storage
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── test-users
 │   │   │   │   │   │   └── page.tsx
 │   │   │   │   │   └── users
 │   │   │   │   │       └── page.tsx
@@ -225,6 +260,10 @@
 │   │   │   │   │   │   └── page.tsx
 │   │   │   │   │   └── upload
 │   │   │   │   │       └── page.tsx
+│   │   │   │   ├── profile
+│   │   │   │   │   ├── mfa
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   └── page.tsx
 │   │   │   │   └── provider
 │   │   │   │       ├── analysis
 │   │   │   │       │   └── page.tsx
@@ -259,22 +298,94 @@
 │   │   │   │       │   └── page.tsx
 │   │   │   │       ├── share
 │   │   │   │       │   └── page.tsx
-│   │   │   │       └── upload
+│   │   │   │       ├── upload
+│   │   │   │       │   └── page.tsx
+│   │   │   │       └── verification
 │   │   │   │           └── page.tsx
+│   │   │   ├── account
+│   │   │   │   └── devices
+│   │   │   │       └── page.tsx
 │   │   │   ├── api
+│   │   │   │   ├── admin
+│   │   │   │   │   └── provider-verifications
+│   │   │   │   │       ├── [id]
+│   │   │   │   │       └── route.ts
 │   │   │   │   ├── appointments
 │   │   │   │   │   ├── [id]
 │   │   │   │   │   │   └── route.ts
 │   │   │   │   │   ├── provider
 │   │   │   │   │   │   └── [id]
 │   │   │   │   │   └── route.ts
-│   │   │   │   └── auth
-│   │   │   │       ├── login
-│   │   │   │       │   └── route.ts
-│   │   │   │       ├── register
-│   │   │   │       │   └── route.ts
-│   │   │   │       └── validate
+│   │   │   │   ├── auth
+│   │   │   │   │   ├── [...nextauth]
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── cognito
+│   │   │   │   │   │   ├── auth-helper.ts
+│   │   │   │   │   │   ├── clear-refresh-token
+│   │   │   │   │   │   ├── confirm-sign-up
+│   │   │   │   │   │   ├── devices
+│   │   │   │   │   │   ├── logout
+│   │   │   │   │   │   ├── mfa
+│   │   │   │   │   │   ├── refresh
+│   │   │   │   │   │   ├── session
+│   │   │   │   │   │   ├── set-refresh-token
+│   │   │   │   │   │   ├── sign-in
+│   │   │   │   │   │   ├── sign-out
+│   │   │   │   │   │   ├── sign-up
+│   │   │   │   │   │   └── user
+│   │   │   │   │   ├── devices
+│   │   │   │   │   │   ├── [deviceKey]
+│   │   │   │   │   │   ├── events
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── link-account
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── login
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── mfa
+│   │   │   │   │   │   ├── disable
+│   │   │   │   │   │   ├── setup
+│   │   │   │   │   │   └── verify
+│   │   │   │   │   ├── refresh
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── register
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── revoke
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── social
+│   │   │   │   │   │   ├── [provider]
+│   │   │   │   │   │   └── providers
+│   │   │   │   │   └── validate
+│   │   │   │   │       └── route.ts
+│   │   │   │   ├── images
+│   │   │   │   │   └── [id]
+│   │   │   │   │       ├── dicom-metadata
+│   │   │   │   │       └── dicom-view
+│   │   │   │   ├── notifications
+│   │   │   │   │   ├── [id]
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── provider
+│   │   │   │   │   └── verification
+│   │   │   │   │       └── route.ts
+│   │   │   │   └── users
+│   │   │   │       └── profile
+│   │   │   │           ├── image
 │   │   │   │           └── route.ts
+│   │   │   ├── auth
+│   │   │   │   ├── cognito-login
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── forgot-password
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── login
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── register
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── reset-password
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── social-callback
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── verify-email
+│   │   │   │       └── page.tsx
 │   │   │   ├── auth-test
 │   │   │   │   └── page.tsx
 │   │   │   ├── dashboard
@@ -285,9 +396,6 @@
 │   │   │   │   └── page.tsx
 │   │   │   ├── layout.tsx
 │   │   │   ├── loading.tsx
-│   │   │   ├── login
-│   │   │   │   ├── loading.tsx
-│   │   │   │   └── page.tsx
 │   │   │   ├── manual-tests
 │   │   │   │   └── page.tsx
 │   │   │   ├── messages
@@ -298,9 +406,6 @@
 │   │   │   ├── patients
 │   │   │   │   └── page.tsx
 │   │   │   ├── profile
-│   │   │   │   └── page.tsx
-│   │   │   ├── register
-│   │   │   │   ├── loading.tsx
 │   │   │   │   └── page.tsx
 │   │   │   ├── reports
 │   │   │   │   ├── appointments
@@ -319,6 +424,7 @@
 │   │   │   └── upload
 │   │   │       └── page.tsx
 │   │   ├── components
+│   │   │   ├── AmplifyProvider.tsx
 │   │   │   ├── DataTable.tsx
 │   │   │   ├── ErrorBoundary.tsx
 │   │   │   ├── GlobalErrorBoundary.tsx
@@ -333,6 +439,8 @@
 │   │   │   ├── WorkflowImage.tsx
 │   │   │   ├── accessibility
 │   │   │   │   └── AccessibilityButton.tsx
+│   │   │   ├── admin
+│   │   │   │   └── CreateTestUsers.tsx
 │   │   │   ├── appointments
 │   │   │   │   ├── AppointmentDetail.tsx
 │   │   │   │   ├── AppointmentForm.tsx
@@ -342,9 +450,17 @@
 │   │   │   │   ├── ProviderCalendar.tsx
 │   │   │   │   └── index.ts
 │   │   │   ├── auth
+│   │   │   │   ├── DeviceManagement.tsx
 │   │   │   │   ├── LoginForm.tsx
+│   │   │   │   ├── MFA
+│   │   │   │   │   ├── SetupMFA.tsx
+│   │   │   │   │   └── VerifyMFA.tsx
 │   │   │   │   ├── MockUserSwitcher.tsx
 │   │   │   │   ├── RegisterForm.tsx
+│   │   │   │   ├── SessionActivityTracker.tsx
+│   │   │   │   ├── SessionManager.tsx
+│   │   │   │   ├── SessionTimeout.tsx
+│   │   │   │   ├── SocialLoginButtons.tsx
 │   │   │   │   └── TwoFactorForm.tsx
 │   │   │   ├── chatbot
 │   │   │   │   ├── Chatbot.tsx
@@ -385,28 +501,34 @@
 │   │   │   │   └── PatientNotesEditor.tsx
 │   │   │   ├── profile
 │   │   │   │   └── ProfileForm.tsx
-│   │   │   ├── shares
-│   │   │   │   └── ShareDialog.tsx
-│   │   │   └── ui
+│   │   │   └── shares
+│   │   │       └── ShareDialog.tsx
 │   │   ├── config
-│   │   │   └── routes.ts
+│   │   │   ├── routes.ts
+│   │   │   └── specialties.ts
 │   │   ├── contexts
 │   │   │   ├── AccessibilityContext.tsx
 │   │   │   ├── AuthContext.tsx
+│   │   │   ├── CognitoAuthContext.tsx
 │   │   │   ├── NotificationContext.tsx
 │   │   │   ├── ThemeContext.tsx
 │   │   │   ├── ToastContext.tsx
 │   │   │   ├── WebSocketContext.tsx
 │   │   │   └── index.tsx
 │   │   ├── hooks
+│   │   │   ├── useCognitoAuth.ts
 │   │   │   ├── useErrorHandler.ts
 │   │   │   └── useToast.ts
 │   │   ├── lib
+│   │   │   ├── amplify
+│   │   │   │   └── config.ts
 │   │   │   ├── api
 │   │   │   │   ├── api.ts
 │   │   │   │   ├── auditLog.ts
 │   │   │   │   ├── client.ts
+│   │   │   │   ├── error-handler.ts
 │   │   │   │   ├── index.ts
+│   │   │   │   ├── s3-api.ts
 │   │   │   │   ├── services
 │   │   │   │   │   ├── annotation.service.ts
 │   │   │   │   │   ├── auth.service.ts
@@ -414,18 +536,36 @@
 │   │   │   │   │   ├── image.service.ts
 │   │   │   │   │   ├── index.ts
 │   │   │   │   │   ├── share.service.ts
+│   │   │   │   │   ├── user-profile.service.ts
 │   │   │   │   │   └── websocket.service.ts
 │   │   │   │   └── types.ts
+│   │   │   ├── audit-logger.ts
+│   │   │   ├── auth
+│   │   │   │   ├── auth-options.ts
+│   │   │   │   ├── cognito-jwt-verifier.ts
+│   │   │   │   ├── mfa-service.ts
+│   │   │   │   └── token-service.ts
 │   │   │   ├── auth.ts
+│   │   │   ├── aws
+│   │   │   │   ├── aws-config.ts
+│   │   │   │   ├── cognito-config.ts
+│   │   │   │   └── s3-utils.ts
+│   │   │   ├── db
+│   │   │   │   └── index.ts
 │   │   │   ├── hipaa.ts
 │   │   │   ├── mockAuth.ts
 │   │   │   ├── prisma.ts
 │   │   │   ├── theme.ts
 │   │   │   ├── utils
 │   │   │   │   ├── auth-debug.ts
-│   │   │   │   └── dateUtils.ts
-│   │   │   └── validation.ts
+│   │   │   │   ├── dateUtils.ts
+│   │   │   │   └── string-utils.ts
+│   │   │   ├── validation.ts
+│   │   │   └── verification
+│   │   │       └── license-verification.ts
 │   │   ├── middleware.ts
+│   │   ├── services
+│   │   │   └── deviceService.ts
 │   │   ├── styles
 │   │   │   └── home.css
 │   │   ├── tests
@@ -438,7 +578,8 @@
 │   │   ├── types
 │   │   │   ├── analysis.ts
 │   │   │   ├── index.ts
-│   │   │   └── prisma.ts
+│   │   │   ├── prisma.ts
+│   │   │   └── user.ts
 │   │   └── utils
 │   │       ├── api.ts
 │   │       ├── dateUtils.ts
@@ -468,7 +609,8 @@
 ├── scripts
 │   └── convert-images.js
 ├── src
+│   └── hooks
 ├── tsconfig.jest.json
 └── users_backup.sql
 
-144 directories, 328 files
+209 directories, 405 files

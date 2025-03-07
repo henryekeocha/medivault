@@ -6,6 +6,10 @@ import { Role } from '@prisma/client';
 const router = Router();
 // Apply protection middleware to all routes
 router.use(protect);
+// Profile routes - available to all authenticated users
+router.route('/profile')
+    .get(userController.getProfile)
+    .put(userController.updateProfile);
 // Restrict all user management routes to Admin
 router.use(restrictTo(Role.ADMIN));
 // User management routes

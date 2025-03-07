@@ -199,24 +199,46 @@ export class AppointmentService {
         return !conflictingAppointment;
     }
     async handleStatusChangeNotifications(appointment, newStatus) {
+        // Create a type adapter for compatibility with email and notification services
+        // This handles the difference between types/models.AppointmentWithUsers and the service-specific types
+        const adaptAppointment = (apt) => {
+            // Make sure all required fields are present, adding default values for missing fields
+            return {
+                ...apt,
+                patient: {
+                    ...apt.patient,
+                    // Add missing properties with default values
+                    updatedAt: apt.patient.createdAt || new Date(),
+                    lastLoginAt: null,
+                    lastLoginIp: null
+                },
+                doctor: {
+                    ...apt.doctor,
+                    // Add missing properties with default values
+                    updatedAt: apt.doctor.createdAt || new Date(),
+                    lastLoginAt: null,
+                    lastLoginIp: null
+                }
+            };
+        };
         // Send notifications based on status change
         switch (newStatus) {
             case 'COMPLETED':
                 await Promise.all([
-                    this.notificationService.sendAppointmentCompleted(appointment),
-                    this.emailService.sendAppointmentCompletedEmail(appointment)
+                    this.notificationService.sendAppointmentCompleted(adaptAppointment(appointment)),
+                    this.emailService.sendAppointmentCompletedEmail(adaptAppointment(appointment))
                 ]);
                 break;
             case 'CANCELLED':
                 await Promise.all([
-                    this.notificationService.sendAppointmentCancelled(appointment),
-                    this.emailService.sendAppointmentCancelledEmail(appointment)
+                    this.notificationService.sendAppointmentCancelled(adaptAppointment(appointment)),
+                    this.emailService.sendAppointmentCancelledEmail(adaptAppointment(appointment))
                 ]);
                 break;
             case 'NO_SHOW':
                 await Promise.all([
-                    this.notificationService.sendAppointmentNoShow(appointment),
-                    this.emailService.sendAppointmentNoShowEmail(appointment)
+                    this.notificationService.sendAppointmentNoShow(adaptAppointment(appointment)),
+                    this.emailService.sendAppointmentNoShowEmail(adaptAppointment(appointment))
                 ]);
                 break;
         }

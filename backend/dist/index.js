@@ -21,10 +21,26 @@ dotenv.config();
 const app = express();
 // Middleware
 app.use(express.json());
-app.use(cors({
-    origin: process.env.CORS_ORIGIN,
-    credentials: true,
-}));
+// More permissive CORS configuration for development
+if (process.env.NODE_ENV === 'development') {
+    console.log('Using development CORS settings');
+    app.use(cors({
+        origin: '*', // Allow all origins in development
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+        optionsSuccessStatus: 200
+    }));
+}
+else {
+    app.use(cors({
+        origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+        optionsSuccessStatus: 200
+    }));
+}
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);

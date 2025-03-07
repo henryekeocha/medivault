@@ -1,3 +1,14 @@
+# node dependencies
+node_modules/
+*/node_modules/
+*/*/node_modules/
+backend/node_modules/
+medical-image-sharing/node_modules/
+
+# env files
+.env
+*/env
+backend/.env
 # dependencies
 /node_modules
 /.pnp
@@ -44,4 +55,5 @@ next-env.d.ts
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db 
+Thumbs.db backend/node_modules
+medical-image-sharing/node_modules

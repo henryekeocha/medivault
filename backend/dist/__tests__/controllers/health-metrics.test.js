@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { app } from '../../app.js';
+import app from '../../app.js';
 import { prisma } from '../../lib/prisma.js';
 import { Role } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -73,7 +73,7 @@ describe('Health Metrics Controller', () => {
             await prisma.healthMetric.create({
                 data: {
                     type: 'BLOOD_PRESSURE',
-                    value: '120/80',
+                    value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
                     providerId: providerId,
@@ -104,7 +104,7 @@ describe('Health Metrics Controller', () => {
             const metric = await prisma.healthMetric.create({
                 data: {
                     type: 'BLOOD_PRESSURE',
-                    value: '120/80',
+                    value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
                     providerId: providerId,
@@ -134,7 +134,7 @@ describe('Health Metrics Controller', () => {
             const metric = await prisma.healthMetric.create({
                 data: {
                     type: 'BLOOD_PRESSURE',
-                    value: '120/80',
+                    value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
                     providerId: providerId,
@@ -164,7 +164,7 @@ describe('Health Metrics Controller', () => {
             const metric = await prisma.healthMetric.create({
                 data: {
                     type: 'BLOOD_PRESSURE',
-                    value: '120/80',
+                    value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
                     providerId: providerId,

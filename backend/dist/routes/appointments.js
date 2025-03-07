@@ -13,9 +13,17 @@ const appointmentRateLimit = rateLimiter({
     max: 100 // limit each IP to 100 requests per windowMs
 });
 // Appointment routes
-router.post('/', appointmentRateLimit, appointmentController.createAppointment[0], appointmentController.createAppointment[1]);
-router.patch('/:id', appointmentRateLimit, appointmentController.updateAppointment[0], appointmentController.updateAppointment[1]);
-router.get('/', appointmentController.getAppointments[0], appointmentController.getAppointments[1]);
-router.get('/provider/:providerId/availability', appointmentController.getProviderAvailability);
+router.post('/', appointmentRateLimit, appointmentController.createAppointment);
+router.patch('/:id', appointmentRateLimit, appointmentController.updateAppointment);
+router.get('/', appointmentController.listAppointments);
+router.get('/:id', appointmentController.getAppointment);
+// This route doesn't exist in the controller - it needs to be implemented or removed
+// For now, we'll use a placeholder to make TypeScript happy
+router.get('/provider/:providerId/availability', ((req, res, next) => {
+    res.status(501).json({
+        status: 'error',
+        message: 'Provider availability endpoint not implemented yet'
+    });
+}));
 export default router;
 //# sourceMappingURL=appointments.js.map

@@ -11,19 +11,36 @@ const signToken = (id) => {
     if (!secret) {
         throw new Error('JWT_SECRET is not defined');
     }
-    return jwt.sign({ id }, secret, {
+    return jwt.sign({
+        sub: id, // Using standard JWT claim 'sub'
+        id: id, // Keep id for backward compatibility
+        iat: Math.floor(Date.now() / 1000)
+    }, secret, {
         expiresIn: process.env.JWT_EXPIRES_IN || '1d'
     });
 };
 // Create and send token
 const createSendToken = (user, statusCode, res) => {
     const token = signToken(user.id);
+    // Generate a refresh token
+    const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET || 'refresh-token-secret';
+    const refreshTokenExpiry = process.env.REFRESH_TOKEN_EXPIRY || '7d';
+    const refreshToken = jwt.sign({
+        sub: user.id,
+        id: user.id,
+        role: user.role,
+        email: user.email,
+        iat: Math.floor(Date.now() / 1000)
+    }, refreshTokenSecret, {
+        expiresIn: refreshTokenExpiry
+    });
     // Remove password from output
     const { password, twoFactorSecret, ...userWithoutSensitiveData } = user;
     res.status(statusCode).json({
         status: 'success',
-        token,
         data: {
+            token,
+            refreshToken,
             user: userWithoutSensitiveData,
         },
     });
@@ -212,26 +229,30 @@ export const refreshToken = async (req, res) => {
 };
 export const validateToken = async (req, res) => {
     try {
-        const token = req.headers.authorization?.split(' ')[1];
-        if (!token) {
-            throw new AppError('No token provided', 401);
+        // If request reaches here, token is valid through middleware
+        // Extract user data from request (added by 'protect' middleware)
+        if (!req.user) {
+            throw new AppError('User not authenticated', 401);
         }
-        const secret = process.env.JWT_SECRET;
-        if (!secret) {
-            throw new Error('JWT_SECRET is not defined');
-        }
-        jwt.verify(token, secret);
-        res.json({
+        // Return validation result with user data
+        const { password, twoFactorSecret, ...userWithoutSensitiveData } = req.user;
+        res.status(200).json({
+            status: 'success',
             data: {
-                isValid: true
+                valid: true,
+                user: userWithoutSensitiveData
             }
         });
     }
     catch (error) {
-        if (error instanceof jwt.JsonWebTokenError) {
-            throw new AppError('Invalid token', 401);
-        }
-        throw new AppError('Error validating token', 500);
+        console.error('Token validation error:', error);
+        res.status(401).json({
+            status: 'fail',
+            data: {
+                valid: false,
+                message: error instanceof AppError ? error.message : 'Invalid token'
+            }
+        });
     }
 };
 export const getCurrentUser = async (req, res) => {
@@ -262,6 +283,20 @@ export const getCurrentUser = async (req, res) => {
         if (error instanceof AppError)
             throw error;
         throw new AppError('Error fetching user', 500);
+    }
+};
+export const logout = async (req, res) => {
+    try {
+        // In the real application, we will want to invalidate the token
+        // by adding it to a blacklist or removing it from a whitelist
+        // You could also clear cookies if you're using cookie-based authentication
+        res.status(200).json({
+            status: 'success',
+            data: null
+        });
+    }
+    catch (error) {
+        throw new AppError('Error logging out', 500);
     }
 };
 //# sourceMappingURL=auth.controller.js.map

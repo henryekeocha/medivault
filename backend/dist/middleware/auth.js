@@ -20,9 +20,15 @@ export const protect = async (req, res, next) => {
         }
         try {
             const decoded = jwt.verify(token, secret);
+            // Get user ID from either 'id' or 'sub' claim for backward compatibility
+            const userId = decoded.sub || decoded.id;
+            if (!userId) {
+                console.error('JWT does not contain user ID in either id or sub claim');
+                return next(new AppError('Invalid token format. Please log in again.', 401));
+            }
             // 3) Check if user still exists
             const currentUser = await prisma.user.findUnique({
-                where: { id: decoded.id },
+                where: { id: userId },
                 select: {
                     id: true,
                     email: true,
@@ -39,7 +45,7 @@ export const protect = async (req, res, next) => {
                 }
             });
             if (!currentUser) {
-                console.log(`User with ID ${decoded.id} from token not found in database`);
+                console.log(`User with ID ${userId} from token not found in database`);
                 return next(new AppError('The user belonging to this token no longer exists.', 401));
             }
             // 4) Check if user is active
