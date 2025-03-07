@@ -1,0 +1,178 @@
+.
+├── README.md
+├── eslint.config.mjs
+├── frontend_app_structure.txt
+├── next-env.d.ts
+├── next.config.js
+├── package-lock.json
+├── package.json
+├── postcss.config.js
+├── prisma
+│   ├── migrations
+│   │   ├── 20250202185645_init
+│   │   │   └── migration.sql
+│   │   ├── 20250202190830_add_user_role
+│   │   │   └── migration.sql
+│   │   ├── 20250202191732_update_schema_with_enums_and_relations
+│   │   │   └── migration.sql
+│   │   ├── 20250202193234_newimage
+│   │   │   └── migration.sql
+│   │   └── migration_lock.toml
+│   ├── schema.prisma
+│   └── seed.ts
+├── public
+│   ├── brain-scan.svg
+│   ├── demo.gif
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── grid.svg
+│   ├── hero-image.png
+│   ├── next.svg
+│   ├── scripts
+│   ├── vercel.svg
+│   ├── window.svg
+│   └── workflow-image.png
+├── src
+│   ├── app
+│   │   ├── (protected)
+│   │   │   ├── admin
+│   │   │   │   ├── analytics
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── audit
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── dashboard
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── images
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── layout.tsx
+│   │   │   │   ├── messages
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── page.tsx
+│   │   │   │   ├── profile
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── settings
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── stats
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── users
+│   │   │   │       └── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   ├── patient
+│   │   │   │   ├── analytics
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── dashboard
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── images
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── messages
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── profile
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── providers
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── settings
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── share
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── upload
+│   │   │   │       └── page.tsx
+│   │   │   └── provider
+│   │   │       ├── analytics
+│   │   │       │   └── page.tsx
+│   │   │       ├── dashboard
+│   │   │       │   └── page.tsx
+│   │   │       ├── images
+│   │   │       │   └── page.tsx
+│   │   │       ├── messages
+│   │   │       │   └── page.tsx
+│   │   │       ├── patients
+│   │   │       │   └── page.tsx
+│   │   │       ├── profile
+│   │   │       │   └── page.tsx
+│   │   │       ├── settings
+│   │   │       │   └── page.tsx
+│   │   │       ├── share
+│   │   │       │   └── page.tsx
+│   │   │       └── upload
+│   │   │           └── page.tsx
+│   │   ├── api
+│   │   │   └── auth
+│   │   │       ├── login
+│   │   │       │   └── route.ts
+│   │   │       ├── register
+│   │   │       │   └── route.ts
+│   │   │       └── validate
+│   │   │           └── route.ts
+│   │   ├── dashboard
+│   │   │   └── page.tsx
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── images
+│   │   │   └── page.tsx
+│   │   ├── layout.tsx
+│   │   ├── loading.tsx
+│   │   ├── login
+│   │   │   ├── loading.tsx
+│   │   │   └── page.tsx
+│   │   ├── messages
+│   │   │   ├── [chatId]
+│   │   │   │   └── page.tsx
+│   │   │   └── page.tsx
+│   │   ├── page.tsx
+│   │   ├── profile
+│   │   │   └── page.tsx
+│   │   ├── register
+│   │   │   ├── loading.tsx
+│   │   │   └── page.tsx
+│   │   ├── settings
+│   │   │   └── page.tsx
+│   │   ├── share
+│   │   │   └── page.tsx
+│   │   └── upload
+│   │       └── page.tsx
+│   ├── components
+│   │   ├── HeroImage.tsx
+│   │   ├── HomeContent.tsx
+│   │   ├── SkeletonLoader.tsx
+│   │   ├── WorkflowImage.tsx
+│   │   ├── accessibility
+│   │   │   └── AccessibilityButton.tsx
+│   │   ├── auth
+│   │   │   ├── LoginForm.tsx
+│   │   │   ├── RegisterForm.tsx
+│   │   │   └── TwoFactorForm.tsx
+│   │   ├── footer.tsx
+│   │   ├── images
+│   │   │   ├── ImageCard.tsx
+│   │   │   ├── ImageUpload.tsx
+│   │   │   ├── ImageViewer.tsx
+│   │   │   └── SecureShareModal.tsx
+│   │   ├── landing
+│   │   │   └── HomeContent.tsx
+│   │   ├── layout
+│   │   │   ├── DashboardLayout.tsx
+│   │   │   ├── Footer.tsx
+│   │   │   └── Navbar.tsx
+│   │   ├── logo.tsx
+│   │   └── profile
+│   │       └── ProfileForm.tsx
+│   ├── config
+│   │   └── routes.ts
+│   ├── contexts
+│   │   ├── AccessibilityContext.tsx
+│   │   ├── AuthContext.tsx
+│   │   ├── NotificationContext.tsx
+│   │   └── ThemeContext.tsx
+│   ├── lib
+│   │   ├── api
+│   │   │   └── index.ts
+│   │   └── prisma.ts
+│   ├── middleware.ts
+│   ├── styles
+│   │   └── home.css
+│   └── types
+│       └── index.ts
+├── tailwind.config.ts
+└── tsconfig.json
+
+70 directories, 106 files

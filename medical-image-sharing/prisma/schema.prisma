@@ -1,0 +1,663 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PATIENT
+  PROVIDER
+  ADMIN
+}
+
+enum ImageStatus {
+  PROCESSING
+  READY
+  ERROR
+}
+
+enum SharePermission {
+  VIEW
+  EDIT
+  FULL
+}
+
+enum AnnotationType {
+  MARKER
+  MEASUREMENT
+  NOTE
+}
+
+enum NotificationType {
+  NEW_SHARE
+  NEW_MESSAGE
+  ANNOTATION_ADDED
+  SECURITY_ALERT
+  SYSTEM_UPDATE
+}
+
+enum PatientStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_REVIEW
+  ARCHIVED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum HealthMetricType {
+  VITAL_SIGNS
+  LAB_RESULTS
+  MEDICATION_ADHERENCE
+  APPOINTMENT_ATTENDANCE
+  IMAGING_FREQUENCY
+  PROVIDER_INTERACTION
+}
+
+enum ImageType {
+  XRAY
+  MRI
+  CT
+  ULTRASOUND
+  OTHER
+}
+
+enum ShareType {
+  LINK
+  DIRECT
+  EMAIL
+}
+
+// Add a new enum for provider specialties
+enum ProviderSpecialty {
+  GENERAL
+  RADIOLOGY
+  CARDIOLOGY
+  NEUROLOGY
+  ORTHOPEDICS
+  ONCOLOGY
+  GASTROENTEROLOGY
+  PEDIATRICS
+  INTERNAL_MEDICINE
+  FAMILY_MEDICINE
+  EMERGENCY_MEDICINE
+  OBSTETRICS_GYNECOLOGY
+  DERMATOLOGY
+  OPHTHALMOLOGY
+  PSYCHIATRY
+  UROLOGY
+  OTOLARYNGOLOGY
+  ANESTHESIOLOGY
+  PATHOLOGY
+  NUCLEAR_MEDICINE
+  PHYSICAL_MEDICINE
+  PLASTIC_SURGERY
+  GENERAL_SURGERY
+  VASCULAR_SURGERY
+  THORACIC_SURGERY
+  NEPHROLOGY
+  OTHER
+}
+
+enum ChatMessageType {
+  USER
+  BOT
+  SYSTEM
+}
+
+enum ChatMessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model User {
+  id                String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name             String
+  email            String    @unique
+  username         String?   @unique
+  password         String    // Hashed password
+  role             Role      @default(PATIENT)
+  specialty        ProviderSpecialty? // Only applicable for providers
+  emailVerified    DateTime?
+  image            String?   // Profile image URL
+  isActive         Boolean   @default(true)
+  twoFactorEnabled Boolean   @default(false)
+  twoFactorSecret  String?   // For 2FA setup
+  lastLoginAt      DateTime?
+  lastLoginIp      String?
+  lastActiveAt     DateTime?
+  isLocked         Boolean   @default(false)
+  accountLockExpiresAt DateTime?
+  failedLoginAttempts Int     @default(0)
+  resetPasswordToken String?
+  resetPasswordExpires DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Security and preferences
+  settings         UserSettings?
+  securityLogs     SecurityLog[]
+  auditLogs        AuditLog[]
+  
+  // Relations
+  images           Image[]   // Images uploaded by the user
+  annotations      Annotation[]
+  sharedByMe       Share[]   @relation("SharedBy")
+  sharedWithMe     Share[]   @relation("SharedWith")
+  sentMessages     Message[] @relation("MessageSender")
+  receivedMessages Message[] @relation("MessageReceiver")
+  notifications    Notification[]
+  fileAccessLogs   FileAccessLog[]
+
+  // Provider-specific relations
+  patientsAsDr     PatientProvider[] @relation("Doctor")
+  appointmentsAsDr Appointment[]     @relation("Doctor")
+  prescriptionsProvided Prescription[] @relation("PrescriptionProvider")
+
+  // Patient-specific relations
+  providers        PatientProvider[] @relation("Patient")
+  appointments     Appointment[]     @relation("Patient")
+  medicalRecords   MedicalRecord[]
+  prescriptions    Prescription[]
+
+  // Admin-specific relations
+  systemLogs       SystemLog[]
+
+  // Analytics relations
+  activities       UserActivity[]
+  storageUsage     StorageUsage[]
+
+  // Health analytics relations
+  healthMetrics    HealthMetric[]  @relation()
+  metricsByProvider HealthMetric[] @relation("MetricProvider")
+  providerAnalytics ProviderAnalytics[]
+
+  // Chat relations
+  chatSessions     ChatSession[]
+
+  // Verification relations
+  providerVerification ProviderVerification?
+
+  // Profile relation
+  profile          Profile?
+
+  // NextAuth.js relations
+  accounts         Account[]
+  sessions         Session[]
+
+  @@index([email])
+  @@index([username])
+  @@index([role])
+}
+
+model UserSettings {
+  id                   String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId               String   @unique @db.Uuid
+  emailNotifications   Boolean  @default(true)
+  pushNotifications    Boolean  @default(true)
+  messageNotifications Boolean  @default(true)
+  shareNotifications   Boolean  @default(true)
+  theme                String   @default("light")
+  language             String   @default("en")
+  timezone             String   @default("UTC")
+  highContrast         Boolean  @default(false)
+  fontSize             String   @default("normal")
+  reduceMotion         Boolean  @default(false)
+  profileVisibility    String   @default("public")
+  showOnlineStatus     Boolean  @default(true)
+  mfaEnabled           Boolean  @default(false)
+  mfaSecret            String?  // TOTP secret for 2FA
+  tokenVersion         Int      @default(0) // For token refreshing and invalidation
+  workingHours         Json?
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model SecurityLog {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
+  action      String   // e.g., "password_change", "2fa_enabled", "login", "logout"
+  ipAddress   String?
+  userAgent   String?
+  success     Boolean  @default(true)
+  failReason  String?
+  metadata    Json?    // JSON field to store additional details
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Image {
+  id                String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  filename          String
+  fileType          String               @default("application/dicom")
+  fileExtension     String               @default(".dcm")
+  fileSize          Int
+  uploadDate        DateTime             @default(now())
+  metadata          Json?
+  status            ImageStatus          @default(PROCESSING)
+  type              ImageType            @default(OTHER)
+  patientId         String?              @db.Uuid
+  studyDate         DateTime?
+  modality          String?
+  bodyPart          String?
+  diagnosis         String?
+  notes             String?
+  tags              String[]
+  processingStarted DateTime?
+  processingEnded   DateTime?
+  errorMessage      String?
+  lastViewed        DateTime?
+  viewCount         Int                  @default(0)
+  userId            String               @db.Uuid
+  s3Key             String               @unique
+  s3Url             String
+  annotations       Annotation[]
+  appointments      Appointment[]
+  fileAccessLogs    FileAccessLog[]
+  user              User                 @relation(fields: [userId], references: [id])
+  medicalRecords    MedicalRecordImage[]
+  shares            Share[]
+
+  @@index([userId])
+  @@index([patientId])
+  @@index([uploadDate])
+  @@index([type])
+  @@index([studyDate])
+}
+
+// Add join table for MedicalRecord and Image
+model MedicalRecordImage {
+  id              String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  medicalRecordId String        @db.Uuid
+  imageId         String        @db.Uuid
+  createdAt       DateTime      @default(now())
+  image           Image         @relation(fields: [imageId], references: [id])
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id])
+
+  @@unique([medicalRecordId, imageId])
+  @@index([medicalRecordId])
+  @@index([imageId])
+}
+
+model Share {
+  id               String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type             ShareType       @default(LINK)
+  permissions      SharePermission @default(VIEW)
+  shareUrl         String?         @unique
+  accessKey        String?
+  expiresAt        DateTime?
+  createdAt        DateTime        @default(now())
+  lastAccessed     DateTime?
+  accessCount      Int             @default(0)
+  recipientEmail   String?
+  emailSent        Boolean         @default(false)
+  emailSentAt      DateTime?
+  imageId          String          @db.Uuid
+  sharedByUserId   String          @db.Uuid
+  sharedWithUserId String?         @db.Uuid
+  token            String?         @unique
+  image            Image           @relation(fields: [imageId], references: [id])
+  sharedByUser     User            @relation("SharedBy", fields: [sharedByUserId], references: [id])
+  sharedWithUser   User?           @relation("SharedWith", fields: [sharedWithUserId], references: [id])
+
+  @@index([imageId])
+  @@index([sharedByUserId])
+  @@index([sharedWithUserId])
+  @@index([shareUrl])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model Annotation {
+  id          String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type        AnnotationType
+  content     String
+  coordinates Json
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  imageId     String         @db.Uuid
+  userId      String         @db.Uuid
+  image       Image          @relation(fields: [imageId], references: [id])
+  user        User          @relation(fields: [userId], references: [id])
+
+  @@index([imageId])
+  @@index([userId])
+}
+
+model Message {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  content     String
+  attachments Json?
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+  senderId    String    @db.Uuid
+  recipientId String    @db.Uuid
+  recipient   User      @relation("MessageReceiver", fields: [recipientId], references: [id])
+  sender      User      @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([senderId])
+  @@index([recipientId])
+}
+
+model Notification {
+  id        String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type      NotificationType
+  content   String
+  read      Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+  userId    String           @db.Uuid
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([read])
+}
+
+model PatientProvider {
+  id        String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  status    PatientStatus @default(ACTIVE)
+  startDate DateTime      @default(now())
+  endDate   DateTime?
+  notes     String?
+  patientId String        @db.Uuid
+  doctorId  String        @db.Uuid
+  metadata  Json?
+  doctor    User          @relation("Doctor", fields: [doctorId], references: [id])
+  patient   User          @relation("Patient", fields: [patientId], references: [id])
+
+  @@unique([patientId, doctorId])
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+model Appointment {
+  id          String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  status      AppointmentStatus @default(SCHEDULED)
+  notes       String?
+  patientId   String            @db.Uuid
+  doctorId    String            @db.Uuid
+  imageId     String?           @db.Uuid
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  endTime     DateTime
+  startTime   DateTime
+  doctor      User              @relation("Doctor", fields: [doctorId], references: [id])
+  image       Image?            @relation(fields: [imageId], references: [id])
+  patient     User              @relation("Patient", fields: [patientId], references: [id])
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([startTime])
+  @@index([endTime])
+}
+
+model MedicalRecord {
+  id         String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  patientId  String                @db.Uuid
+  providerId String
+  recordType String
+  title      String
+  content    String
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  patient    User                  @relation(fields: [patientId], references: [id])
+  images     MedicalRecordImage[]
+
+  @@index([patientId])
+  @@index([providerId])
+  @@index([createdAt])
+}
+
+model Prescription {
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  medication   String
+  dosage       String
+  frequency    String
+  startDate    DateTime
+  endDate      DateTime?
+  instructions String?
+  patientId    String    @db.Uuid
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  notes        String?
+  providerId   String    @db.Uuid
+  patient      User      @relation(fields: [patientId], references: [id])
+  provider     User      @relation("PrescriptionProvider", fields: [providerId], references: [id])
+
+  @@index([patientId])
+  @@index([providerId])
+  @@index([startDate])
+}
+
+model SystemLog {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  message   String
+  metadata  Json?
+  userId    String?   @db.Uuid
+  level     String
+  timestamp DateTime  @default(now())
+  user      User?     @relation(fields: [userId], references: [id])
+
+  @@index([level])
+  @@index([timestamp])
+  @@index([userId])
+}
+
+model Analytics {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type          String    // e.g., "USER_ACTIVITY", "IMAGE_UPLOADS", "STORAGE_USAGE"
+  metric        String    // The metric being measured
+  value         Float     // The value of the metric
+  timestamp     DateTime  @default(now())
+  metadata      Json?     // Additional metadata about the metric
+
+  @@index([type])
+  @@index([timestamp])
+}
+
+model UserActivity {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String    @db.Uuid
+  timestamp DateTime  @default(now())
+  details   Json?
+  type      String
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model StorageUsage {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String    @db.Uuid
+  timestamp DateTime  @default(now())
+  bytes     BigInt
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model HealthMetric {
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type          HealthMetricType
+  value         Float
+  unit          String?
+  timestamp     DateTime        @default(now())
+  notes         String?
+  metadata      Json?
+  
+  // Relations
+  patientId     String          @db.Uuid
+  patient       User            @relation(fields: [patientId], references: [id])
+  providerId    String?         @db.Uuid
+  provider      User?           @relation("MetricProvider", fields: [providerId], references: [id])
+
+  @@index([patientId])
+  @@index([providerId])
+  @@index([type])
+  @@index([timestamp])
+}
+
+model ProviderAnalytics {
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  providerId String    @db.Uuid
+  timestamp  DateTime  @default(now())
+  metric     String
+  value      Float
+  provider   User      @relation(fields: [providerId], references: [id])
+
+  @@index([providerId])
+  @@index([timestamp])
+}
+
+model ChatSession {
+  id        String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String        @db.Uuid
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  title     String?
+  messages  ChatMessage[]
+  user      User          @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model ChatMessage {
+  id            String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  content       String
+  createdAt     DateTime    @default(now())
+  chatSessionId String      @db.Uuid
+  role          String
+  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id])
+
+  @@index([chatSessionId])
+}
+
+model AuditLog {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  action    String
+  userId    String    @db.Uuid
+  timestamp DateTime  @default(now())
+  details   Json?
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model FileAccessLog {
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId          String    @db.Uuid
+  fileId          String    @db.Uuid
+  accessType      String
+  accessTimestamp DateTime  @default(now())
+  ipAddress       String?
+  userAgent       String?
+  metadata        Json?
+  file            Image     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([fileId])
+  @@index([accessTimestamp])
+}
+
+model ProviderVerification {
+  id                String           @id @default(uuid())
+  providerId        String           @unique @db.Uuid
+  provider          User             @relation(fields: [providerId], references: [id])
+  licenseNumber     String
+  licenseState      String
+  licenseExpiryDate DateTime
+  specialtyName     String?
+  identityDocumentS3Key String?
+  licenseDocumentS3Key  String?
+  selfieS3Key       String?
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedAt        DateTime?
+  rejectionReason   String?
+  rejectedAt        DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  lastVerificationDate DateTime?
+  nextVerificationDate DateTime?
+  verifiedBy        String?
+  notes             String?
+
+  @@index([providerId])
+  @@index([verificationStatus])
+  @@index([licenseNumber])
+}
+
+model Profile {
+  id                  String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId              String    @unique @db.Uuid
+  bio                 String?
+  location            String?
+  phone               String?
+  specialties         String[]
+  acceptingNewPatients Boolean  @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  // Relation to user
+  user                User      @relation(fields: [userId], references: [id])
+}
+
+// NextAuth.js Account model for OAuth providers
+model Account {
+  id                 String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId             String    @db.Uuid
+  type               String    // oauth, email, etc.
+  provider           String    // google, facebook, etc.
+  providerAccountId  String    // Provider-specific account ID
+  refresh_token      String?
+  access_token       String?
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+  
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// Add Session model if not already present
+model Session {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  sessionToken String   @unique
+  userId       String   @db.Uuid
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+} 
