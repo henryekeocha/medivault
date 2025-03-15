@@ -1,6 +1,11 @@
 .
+├── DOCKER-GUIDE.md
+├── DOCKER-README.md
+├── Dockerfile.simple
+├── README.md
 ├── app-structure.txt
 ├── backend
+│   ├── Dockerfile
 │   ├── README.md
 │   ├── baseline.sql
 │   ├── jest.config.js
@@ -97,10 +102,12 @@
 │   │   │   ├── analytics.service.ts
 │   │   │   ├── appointment.service.ts
 │   │   │   ├── auth
+│   │   │   │   ├── auth-options.ts
 │   │   │   │   ├── cognito-jwt-verifier.ts
 │   │   │   │   ├── mfa-service.ts
 │   │   │   │   └── token-service.ts
 │   │   │   ├── aws
+│   │   │   │   ├── aws-config.ts
 │   │   │   │   ├── cognito-config.ts
 │   │   │   │   ├── cognito-mfa-service.ts
 │   │   │   │   ├── cognito-service.ts
@@ -122,8 +129,11 @@
 │   │   │   └── notification.ts
 │   │   └── utils
 │   │       ├── appError.ts
+│   │       ├── audit-logger.ts
 │   │       ├── auth.ts
 │   │       ├── catchAsync.ts
+│   │       ├── logger.ts
+│   │       ├── string-utils.ts
 │   │       └── validators.ts
 │   ├── tests
 │   │   ├── integration
@@ -133,10 +143,13 @@
 │   └── uploads
 ├── check-db-enums.js
 ├── create-simple-user.js
+├── create_env_examples.sh
+├── docker-compose.yml
 ├── full_app_structure.txt
 ├── jest.config.js
 ├── jest.setup.js
 ├── medical-image-sharing
+│   ├── Dockerfile
 │   ├── README-test-users.md
 │   ├── README.md
 │   ├── aws
@@ -372,8 +385,6 @@
 │   │   │   │           ├── image
 │   │   │   │           └── route.ts
 │   │   │   ├── auth
-│   │   │   │   ├── cognito-login
-│   │   │   │   │   └── page.tsx
 │   │   │   │   ├── forgot-password
 │   │   │   │   │   └── page.tsx
 │   │   │   │   ├── login
@@ -607,10 +618,10 @@
 │   ├── workflow-image.svg
 │   └── workflow-image.tsx
 ├── scripts
-│   └── convert-images.js
+│   ├── convert-images.js
+│   └── docker-init.sh
 ├── src
-│   └── hooks
 ├── tsconfig.jest.json
 └── users_backup.sql
 
-209 directories, 405 files
+207 directories, 418 files

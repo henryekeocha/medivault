@@ -4,9 +4,8 @@
 export var UserRole;
 (function (UserRole) {
     UserRole["ADMIN"] = "ADMIN";
-    UserRole["DOCTOR"] = "DOCTOR";
+    UserRole["PROVIDER"] = "PROVIDER";
     UserRole["PATIENT"] = "PATIENT";
-    UserRole["STAFF"] = "STAFF";
 })(UserRole || (UserRole = {}));
 export const AUTH_COOKIE_NAME = 'auth_token';
 export const REFRESH_COOKIE_NAME = 'refresh_token';

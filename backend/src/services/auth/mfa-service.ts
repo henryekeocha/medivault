@@ -92,15 +92,21 @@ export class MfaService {
    */
   async disableMfa(userId: string): Promise<boolean> {
     try {
+      // Update the user without using backupCodes directly
       await prisma.user.update({
         where: { id: userId },
         data: {
           twoFactorEnabled: false,
           twoFactorSecret: null,
-          // Clear the backup codes
-          backupCodes: [],
         },
       });
+      
+      // Use executeRaw to handle JSON operations separately
+      await prisma.$executeRaw`
+        UPDATE "User" 
+        SET "backupCodes" = '[]'::jsonb 
+        WHERE id = ${userId}::uuid
+      `;
       
       return true;
     } catch (error) {
@@ -136,13 +142,12 @@ export class MfaService {
       // Generate random recovery codes
       const codes = Array.from({ length: count }, () => this.generateRecoveryCode());
 
-      // Store recovery codes in the User model's backupCodes field
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          backupCodes: codes,
-        }
-      });
+      // Store recovery codes as JSON using raw SQL query
+      await prisma.$executeRaw`
+        UPDATE "User" 
+        SET "backupCodes" = ${JSON.stringify(codes)}::jsonb 
+        WHERE id = ${userId}::uuid
+      `;
 
       return codes;
     } catch (error) {
@@ -173,25 +178,32 @@ export class MfaService {
    */
   async verifyRecoveryCode(userId: string, code: string): Promise<boolean> {
     try {
-      // Get the user with their backup codes
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { backupCodes: true }
-      });
-
-      if (!user || !user.backupCodes.includes(code)) {
+      // Get the backup codes directly with a raw query
+      const result = await prisma.$queryRaw<Array<{ backupCodes: string }>>`
+        SELECT "backupCodes" FROM "User" WHERE id = ${userId}::uuid
+      `;
+      
+      if (!result || result.length === 0) {
+        return false;
+      }
+      
+      // Parse the JSON backup codes
+      const backupCodesStr = result[0].backupCodes;
+      const backupCodes: string[] = JSON.parse(backupCodesStr || '[]');
+      
+      if (!backupCodes.includes(code)) {
         return false;
       }
 
       // Remove the used code from the backupCodes array
-      const updatedBackupCodes = user.backupCodes.filter(c => c !== code);
+      const updatedBackupCodes = backupCodes.filter((c: string) => c !== code);
       
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          backupCodes: updatedBackupCodes,
-        }
-      });
+      // Update with the new backup codes
+      await prisma.$executeRaw`
+        UPDATE "User" 
+        SET "backupCodes" = ${JSON.stringify(updatedBackupCodes)}::jsonb 
+        WHERE id = ${userId}::uuid
+      `;
 
       return true;
     } catch (error) {

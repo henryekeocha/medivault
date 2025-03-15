@@ -15,7 +15,17 @@
     "qa:responsive": "npm run responsive-check",
     "qa:properties": "npm run property-check",
     "lint": "next lint",
-    "migrate-users-to-cognito": "ts-node scripts/migrate-users-to-cognito.ts"
+    "migrate-users-to-cognito": "ts-node scripts/migrate-users-to-cognito.ts",
+    "use:dev": "chmod +x ./scripts/set-env.sh && ./scripts/set-env.sh development",
+    "use:prod": "chmod +x ./scripts/set-env.sh && ./scripts/set-env.sh production",
+    "dev:local": "npm run use:dev && next dev",
+    "build:prod": "npm run use:prod && next build",
+    "health": "node scripts/check-health.js",
+    "health:dev": "node scripts/check-health.js --env=development",
+    "health:prod": "node scripts/check-health.js --env=production",
+    "test:audit-logs": "node scripts/test-audit-logging.js",
+    "test:audit-logs:dev": "node scripts/test-audit-logging.js --env=development",
+    "test:audit-logs:prod": "node scripts/test-audit-logging.js --env=production"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.8.0",

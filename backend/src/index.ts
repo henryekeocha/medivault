@@ -10,6 +10,7 @@ import messageRoutes from './routes/messages.js';
 import settingsRoutes from './routes/settings.js';
 import fileRoutes from './routes/files.js';
 import analyticsRoutes from './routes/analytics.js';
+import healthRoutes from './routes/health.routes.js';
 import { prisma } from './lib/prisma.js';
 import { createServer } from 'http';
 import { WebSocketService } from './services/websocket.service.js';
@@ -65,6 +66,9 @@ if (process.env.NODE_ENV === 'development') {
     optionsSuccessStatus: 200
   }));
 }
+
+// Health check route - should be public and outside API prefix
+app.use('/health', healthRoutes);
 
 // Routes
 app.use('/api/auth', authRoutes);

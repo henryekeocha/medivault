@@ -79,8 +79,15 @@ export class ApiClient {
   private currentUser: User | null = null;
 
   private constructor() {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api';
+    
+    // Log the API URL in development mode
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[API] Initializing API client with base URL: ${apiUrl}`);
+    }
+    
     this.axiosInstance = axios.create({
-      baseURL: '/api',
+      baseURL: apiUrl,
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
@@ -117,8 +124,11 @@ export class ApiClient {
         const token = localStorage.getItem('token');
         if (token && !this.isPublicRoute()) {
           config.headers.Authorization = `Bearer ${token}`;
-          // Log only first 10 chars of token for security
-          console.log(`[API] Adding token to request: ${token.substring(0, 10)}...`);
+          // Log only in development mode
+          if (process.env.NODE_ENV === 'development') {
+            // Log only first 10 chars of token for security
+            console.log(`[API] Adding token to request: ${token.substring(0, 10)}...`);
+          }
         }
         return config;
       },
@@ -139,13 +149,38 @@ export class ApiClient {
           return Promise.reject(error);
         }
 
-        console.error(`[API] Response error: ${error.response?.status} ${error.message}`);
+        // Handle network errors (connection refused, timeout, etc.)
+        if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || !error.response) {
+          // Don't spam the console with repeated errors for the same endpoint
+          const endpoint = originalRequest?.url || 'unknown';
+          const errorKey = `network-error-${endpoint}`;
+          
+          // Only log detailed info once per hour per endpoint
+          const lastErrorTime = localStorage.getItem(errorKey);
+          const ONE_HOUR = 60 * 60 * 1000;
+          
+          if (!lastErrorTime || (Date.now() - parseInt(lastErrorTime)) > ONE_HOUR) {
+            if (process.env.NODE_ENV === 'development') {
+              console.error(`[API] Service unavailable: ${endpoint}`, error);
+            } else {
+              console.error(`[API] Service unavailable: ${endpoint} - ${error.message}`);
+            }
+            localStorage.setItem(errorKey, Date.now().toString());
+          }
+          
+          // Custom error to help with user feedback
+          const customError = new Error('Network Error: The service is currently unavailable. Please try again later.');
+          customError.name = 'ServiceUnavailableError';
+          return Promise.reject(customError);
+        }
 
         // Handle token refresh
         if (error.response?.status === 401 && !originalRequest._retry) {
           originalRequest._retry = true;
           try {
-            console.log('[API] Attempting token refresh');
+            if (process.env.NODE_ENV === 'development') {
+              console.log('[API] Attempting token refresh');
+            }
             const refreshToken = localStorage.getItem('refreshToken');
             
             if (!refreshToken) {
@@ -158,7 +193,9 @@ export class ApiClient {
             });
 
             if (response.data.data.token) {
-              console.log('[API] Token refresh successful');
+              if (process.env.NODE_ENV === 'development') {
+                console.log('[API] Token refresh successful');
+              }
               localStorage.setItem('token', response.data.data.token);
               localStorage.setItem('refreshToken', response.data.data.refreshToken);
               
@@ -167,14 +204,50 @@ export class ApiClient {
               return this.axiosInstance(originalRequest);
             }
           } catch (refreshError) {
-            console.error('[API] Token refresh failed:', refreshError);
+            console.error('[API] Token refresh failed');
             localStorage.removeItem('token');
             localStorage.removeItem('refreshToken');
             if (!this.isPublicRoute()) {
               console.log('[API] Redirecting to login due to authentication failure');
+              // Store the current URL to redirect back after login
+              localStorage.setItem('redirect_after_login', window.location.pathname);
               window.location.href = '/login';
             }
             return Promise.reject(refreshError);
+          }
+        }
+
+        // Enhance error messages for better user feedback
+        if (error.response) {
+          const status = error.response.status;
+          const data = error.response.data;
+          
+          // Add more context to the error
+          if (data && data.message) {
+            error.userMessage = data.message;
+          } else {
+            switch (status) {
+              case 400:
+                error.userMessage = 'Bad request. Please check your input.';
+                break;
+              case 403:
+                error.userMessage = 'You do not have permission to perform this action.';
+                break;
+              case 404:
+                error.userMessage = 'The requested resource was not found.';
+                break;
+              case 429:
+                error.userMessage = 'Too many requests. Please try again later.';
+                break;
+              case 500:
+              case 502:
+              case 503:
+              case 504:
+                error.userMessage = 'Server error. Please try again later.';
+                break;
+              default:
+                error.userMessage = 'An unexpected error occurred.';
+            }
           }
         }
 
