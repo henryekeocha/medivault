@@ -13,7 +13,7 @@ type AxiosProgressEvent = {
 import { ImageType, ImageStatus, ShareType } from '@prisma/client';
 import { 
   ApiResponse, 
-  ApiErrorResponse,
+  ApiErrorResponse, 
   AuthResponse, 
   LoginRequest, 
   RegisterRequest, 
@@ -39,8 +39,10 @@ import {
   MedicalRecord,
   Patient,
   ProviderVerification,
-  ProviderVerificationRequest
+  ProviderVerificationRequest,
+  ImageListResponse
 } from './types';
+import { getSession } from 'next-auth/react';
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -79,12 +81,24 @@ export class ApiClient {
   private currentUser: User | null = null;
 
   private constructor() {
+    // Ensure we're using the correct API URL for local development
+    let baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    
+    // Remove trailing /api if it exists to avoid double prefixing
+    if (baseURL.endsWith('/api')) {
+      baseURL = baseURL.slice(0, -4);
+    }
+    
+    // Add /api prefix
+    baseURL = `${baseURL}/api`;
+    
     this.axiosInstance = axios.create({
-      baseURL: '/api',
-      timeout: 30000,
+      baseURL,
+      timeout: 10000,
+      withCredentials: true,
       headers: {
         'Content-Type': 'application/json',
-      },
+      }
     });
 
     this.setupInterceptors();
@@ -110,16 +124,42 @@ export class ApiClient {
     return false;
   }
 
+  // Gets token from NextAuth session
+  private async getAuthToken(): Promise<string | null> {
+    if (typeof window !== 'undefined') {
+      try {
+        // Get session from NextAuth
+        const session = await getSession();
+        if (session?.accessToken) {
+          return session.accessToken;
+        }
+      } catch (e) {
+        console.error('Error getting NextAuth session:', e);
+      }
+    }
+    return null;
+  }
+
   private setupInterceptors(): void {
     // Request interceptor
     this.axiosInstance.interceptors.request.use(
-      (config) => {
-        const token = localStorage.getItem('token');
+      async (config) => {
+        // Get token from NextAuth session
+        const token = await this.getAuthToken();
+        
         if (token && !this.isPublicRoute()) {
           config.headers.Authorization = `Bearer ${token}`;
-          // Log only first 10 chars of token for security
-          console.log(`[API] Adding token to request: ${token.substring(0, 10)}...`);
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[API] Adding auth token to request: ${token.substring(0, 10)}...`);
+          }
         }
+        
+        // Remove CORS headers from client-side requests
+        delete config.headers['Access-Control-Allow-Origin'];
+        delete config.headers['Access-Control-Allow-Credentials'];
+        delete config.headers['Access-Control-Allow-Methods'];
+        delete config.headers['Access-Control-Allow-Headers'];
+        
         return config;
       },
       (error) => {
@@ -139,43 +179,47 @@ export class ApiClient {
           return Promise.reject(error);
         }
 
-        console.error(`[API] Response error: ${error.response?.status} ${error.message}`);
-
-        // Handle token refresh
-        if (error.response?.status === 401 && !originalRequest._retry) {
-          originalRequest._retry = true;
-          try {
-            console.log('[API] Attempting token refresh');
-            const refreshToken = localStorage.getItem('refreshToken');
-            
-            if (!refreshToken) {
-              console.error('[API] No refresh token available');
-              throw new Error('No refresh token available');
-            }
-            
-            const response = await this.axiosInstance.post<ApiResponse<AuthResponse>>('/auth/refresh', {
-              refreshToken,
-            });
-
-            if (response.data.data.token) {
-              console.log('[API] Token refresh successful');
-              localStorage.setItem('token', response.data.data.token);
-              localStorage.setItem('refreshToken', response.data.data.refreshToken);
-              
-              // Update the auth header of the original request
-              originalRequest.headers.Authorization = `Bearer ${response.data.data.token}`;
-              return this.axiosInstance(originalRequest);
-            }
-          } catch (refreshError) {
-            console.error('[API] Token refresh failed:', refreshError);
-            localStorage.removeItem('token');
-            localStorage.removeItem('refreshToken');
-            if (!this.isPublicRoute()) {
-              console.log('[API] Redirecting to login due to authentication failure');
-              window.location.href = '/login';
-            }
-            return Promise.reject(refreshError);
+        // Handle network errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' || !error.response) {
+          console.error('[API] Network error:', error);
+          
+          // Show a more user-friendly message in the console for development
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[API] Backend server not available at ${this.axiosInstance.defaults.baseURL}`);
+            console.error(`[API] Please make sure the backend server is running on port 3001`);
           }
+          
+          // When in a browser environment, we can show a nicer UI message
+          if (typeof window !== 'undefined') {
+            // Send a custom event that UI components can listen to
+            window.dispatchEvent(new CustomEvent('backend-unavailable', {
+              detail: {
+                message: 'Backend server is not available. Please ensure the server is running.',
+                code: 'SERVER_UNAVAILABLE'
+              }
+            }));
+          }
+          
+          // Return a more specific error for better handling
+          return Promise.reject(new Error('Network error: Backend server not available. Please make sure the backend server is running.'));
+        }
+
+        // Handle 404 Not Found errors
+        if (error.response?.status === 404) {
+          console.warn(`[API] Resource not found: ${originalRequest.url}`);
+          return Promise.reject({
+            ...error,
+            message: `Resource not found: ${originalRequest.url}`
+          });
+        }
+
+        // Handle 401 Unauthorized errors
+        if (error.response?.status === 401) {
+          // Redirect to login page for unauthorized errors
+          if (typeof window !== 'undefined') {
+            window.location.href = '/auth/login';
+          }
+          return Promise.reject(error);
         }
 
         return Promise.reject(error);
@@ -198,13 +242,16 @@ export class ApiClient {
 
   async logout(): Promise<void> {
     await this.axiosInstance.post('/auth/logout');
-    localStorage.removeItem('token');
-    localStorage.removeItem('refreshToken');
   }
 
   async validateToken(): Promise<ApiResponse<TokenValidationResponse>> {
-    const response = await this.axiosInstance.get<ApiResponse<TokenValidationResponse>>('/auth/validate');
-    return response.data;
+    try {
+      const response = await this.axiosInstance.get<ApiResponse<TokenValidationResponse>>('/auth/validate');
+      return response.data;
+    } catch (error) {
+      console.error('[API] Token validation failed:', error);
+      throw error;
+    }
   }
 
   async refreshToken(): Promise<ApiResponse<AuthResponse>> {
@@ -332,7 +379,7 @@ export class ApiClient {
     formData.append('file', file);
     formData.append('metadata', JSON.stringify(metadata));
 
-    const response = await this.axiosInstance.post<ApiResponse<Image>>('/images/upload', formData, {
+    const response = await this.axiosInstance.post<ApiResponse<Image>>('/v1/images/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -351,23 +398,31 @@ export class ApiClient {
     startDate?: string;
     endDate?: string;
     search?: string;
-  }): Promise<ApiResponse<PaginatedResponse<Image>>> {
-    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<Image>>>('/images', { params });
+  }): Promise<ApiResponse<PaginatedResponse<Image> | ImageListResponse>> {
+    const currentUser = this.currentUser;
+    const queryParams = {
+      ...params,
+      role: currentUser?.role || 'PATIENT'
+    };
+    
+    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<Image> | ImageListResponse>>('/api/images', { 
+      params: queryParams 
+    });
     return response.data;
   }
 
   async getImage(id: string): Promise<ApiResponse<Image>> {
-    const response = await this.axiosInstance.get<ApiResponse<Image>>(`/images/${id}`);
+    const response = await this.axiosInstance.get<ApiResponse<Image>>(`/api/images/${id}`);
     return response.data;
   }
 
   async deleteImage(id: string): Promise<ApiResponse<void>> {
-    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/images/${id}`);
+    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/api/images/${id}`);
     return response.data;
   }
 
   async downloadImage(id: string): Promise<Blob> {
-    const response = await this.axiosInstance.get(`/images/${id}/download`, {
+    const response = await this.axiosInstance.get(`/api/images/${id}/download`, {
       responseType: 'blob'
     });
     return response.data;
@@ -386,12 +441,21 @@ export class ApiClient {
   }
 
   async getProviderImages(): Promise<ApiResponse<Image[]>> {
-    const response = await this.axiosInstance.get<ApiResponse<Image[]>>('/providers/images');
+    const response = await this.axiosInstance.get<ApiResponse<Image[]>>('/images', {
+      params: {
+        role: 'PROVIDER'
+      }
+    });
     return response.data;
   }
 
   async getProviderSharedImages(): Promise<ApiResponse<any[]>> {
-    const response = await this.axiosInstance.get<ApiResponse<any[]>>('/providers/shares');
+    const response = await this.axiosInstance.get<ApiResponse<any[]>>('/images', {
+      params: {
+        role: 'PROVIDER',
+        shared: true
+      }
+    });
     return response.data;
   }
 
@@ -465,154 +529,61 @@ export class ApiClient {
     return response.data;
   }
 
-  // Message endpoints
-  async sendMessage(receiverId: string, content: string, attachments?: File[]): Promise<ApiResponse<Message>> {
-    const formData = new FormData();
-    formData.append('content', content);
-    formData.append('receiverId', receiverId);
-    
-    if (attachments) {
-      attachments.forEach((file, index) => {
-        formData.append(`attachments[${index}]`, file);
-      });
-    }
+  // Message API methods
+  async getChats(): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/messages/conversations');
+    return response.data;
+  }
 
-    const response = await this.axiosInstance.post<ApiResponse<Message>>('/messages', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+  async getUnreadCounts(): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/messages');
+    return response.data;
+  }
+
+  async getMessages(chatId: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>(`/messages/${chatId}`);
+    return response.data;
+  }
+
+  async sendMessage(recipientId: string, content: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.post<ApiResponse<any>>('/messages', {
+      recipientId,
+      content
     });
     return response.data;
   }
 
-  async getMessages(params?: { 
-    receiverId?: string;
-    before?: Date;
-    after?: Date;
-    limit?: number;
-  }): Promise<ApiResponse<Message[]>> {
-    const response = await this.axiosInstance.get<ApiResponse<Message[]>>('/messages', { params });
+  async updateMessage(messageId: string, content: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.patch<ApiResponse<any>>(`/messages/${messageId}`, {
+      content
+    });
     return response.data;
   }
 
-  async getChats(params?: {
-    limit?: number;
-    offset?: number;
-  }): Promise<PaginatedResponse<Message>> {
-    const response = await this.axiosInstance.get<PaginatedResponse<Message>>('/messages/chats', { params });
-    return response.data;
-  }
-
-  async markMessageAsRead(messageId: string): Promise<ApiResponse<Message>> {
-    const response = await this.axiosInstance.post<ApiResponse<Message>>(`/messages/${messageId}/read`);
-    return response.data;
-  }
-
-  async getUnreadMessageCounts(): Promise<ApiResponse<{all: number, patients: number, providers: number}>> {
-    const response = await this.axiosInstance.get<ApiResponse<{all: number, patients: number, providers: number}>>('/messages/unread-counts');
+  async deleteMessage(messageId: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.delete<ApiResponse<any>>(`/messages/${messageId}`);
     return response.data;
   }
 
   // Notification endpoints
-  async getNotifications(params?: { 
-    read?: boolean;
-    type?: string;
-    limit?: number;
-  }): Promise<ApiResponse<NotificationResponse[]>> {
-    const response = await this.axiosInstance.get<ApiResponse<NotificationResponse[]>>('/notifications', { params });
+  async getNotifications(): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/api/notifications');
     return response.data;
   }
 
   async markNotificationAsRead(notificationId: string): Promise<ApiResponse<NotificationResponse>> {
-    const response = await this.axiosInstance.patch<ApiResponse<NotificationResponse>>(`/notifications/${notificationId}/read`);
+    const response = await this.axiosInstance.patch<ApiResponse<NotificationResponse>>(`/api/notifications/${notificationId}/read`);
     return response.data;
   }
 
   async markAllNotificationsAsRead(): Promise<ApiResponse<void>> {
-    const response = await this.axiosInstance.post<ApiResponse<void>>('/notifications/read-all');
+    const response = await this.axiosInstance.patch<ApiResponse<void>>('/api/notifications/read-all');
     return response.data;
   }
 
   async deleteNotification(notificationId: string): Promise<ApiResponse<void>> {
-    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/notifications/${notificationId}`);
+    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/api/notifications/${notificationId}`);
     return response.data;
-  }
-
-  // Analytics endpoints
-  async getSystemMetrics(): Promise<ApiResponse<any>> {
-    const response = await this.axiosInstance.get<ApiResponse<any>>('/analytics/system');
-    return response.data;
-  }
-
-  /**
-   * Get user metrics for dashboard
-   * @param userId The ID of the user to get metrics for
-   * @returns Promise with user metrics data
-   */
-  async getUserMetrics(userId: string): Promise<ApiResponse<any>> {
-    if (!userId) {
-      throw new Error('User ID is required');
-    }
-    
-    try {
-      const response = await this.axiosInstance.get<ApiResponse<any>>(`/users/${userId}/metrics`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching user metrics:', error);
-      return {
-        status: 'error',
-        error: {
-          message: error instanceof Error ? error.message : 'Failed to retrieve user metrics',
-          code: 'FETCH_ERROR'
-        }
-      } as ApiResponse<any>;
-    }
-  }
-
-  // Provider statistics endpoint
-  async getProviderStatistics(providerId: string): Promise<ApiResponse<any>> {
-    const response = await this.axiosInstance.get<ApiResponse<any>>(`/statistics/provider/${providerId}`);
-    return response.data;
-  }
-
-  async getFileAccessHistory(fileId: string): Promise<ApiResponse<any>> {
-    const response = await this.axiosInstance.get<ApiResponse<any>>(`/analytics/files/${fileId}/history`);
-    return response.data;
-  }
-
-  // Health Metric endpoints
-  async createHealthMetric(data: Partial<HealthMetricResponse>): Promise<ApiResponse<HealthMetricResponse>> {
-    const response = await this.axiosInstance.post<ApiResponse<HealthMetricResponse>>('/health-metrics', data);
-    return response.data;
-  }
-
-  /**
-   * Get health metrics for a patient
-   * @param params Object containing patientId and optional date range
-   * @returns Promise with health metrics data
-   */
-  async getHealthMetrics(params: { 
-    patientId: string, 
-    startDate?: string, 
-    endDate?: string 
-  }): Promise<ApiResponse<any>> {
-    if (!params.patientId) {
-      throw new Error('Patient ID is required');
-    }
-    
-    try {
-      const response = await this.axiosInstance.get<ApiResponse<any>>('/health-metrics', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching health metrics:', error);
-      return {
-        status: 'error',
-        error: {
-          message: error instanceof Error ? error.message : 'Failed to retrieve health metrics',
-          code: 'FETCH_ERROR'
-        }
-      } as ApiResponse<any>;
-    }
   }
 
   // Appointment endpoints
@@ -623,7 +594,7 @@ export class ApiClient {
     limit?: number;
     status?: string;
   }): Promise<ApiResponse<AppointmentResponse>> {
-    const response = await this.axiosInstance.get<ApiResponse<AppointmentResponse>>('/appointments', { params });
+    const response = await this.axiosInstance.get<ApiResponse<AppointmentResponse>>('/api/appointments', { params });
     return response.data;
   }
   
@@ -634,43 +605,51 @@ export class ApiClient {
     limit?: number;
     status?: string;
   }): Promise<ApiResponse<AppointmentResponse>> {
-    const response = await this.axiosInstance.get<ApiResponse<AppointmentResponse>>(`/appointments/patient/${patientId}`, { params });
+    const response = await this.axiosInstance.get<ApiResponse<AppointmentResponse>>('/api/appointments', {
+      params: {
+        ...params,
+        role: 'PATIENT'
+      }
+    });
     return response.data;
   }
   
-  async getDoctorAppointments(doctorId: string, params?: {
+  async getProviderAppointments(providerId: string, params?: {
+    status?: string;
     startDate?: string;
     endDate?: string;
     page?: number;
     limit?: number;
-    status?: string;
-  }): Promise<ApiResponse<AppointmentResponse>> {
-    const response = await this.axiosInstance.get<ApiResponse<AppointmentResponse>>(`/appointments/doctor/${doctorId}`, { params });
+  }): Promise<ApiResponse<PaginatedResponse<Appointment>>> {
+    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<Appointment>>>(
+      `/api/providers/appointments`,
+      { params: { providerId, ...params } }
+    );
     return response.data;
   }
   
   async getAppointment(id: string): Promise<ApiResponse<Appointment>> {
-    const response = await this.axiosInstance.get<ApiResponse<Appointment>>(`/appointments/${id}`);
+    const response = await this.axiosInstance.get<ApiResponse<Appointment>>(`/api/appointments/${id}`);
     return response.data;
   }
   
   async createAppointment(data: CreateAppointmentRequest): Promise<ApiResponse<Appointment>> {
-    const response = await this.axiosInstance.post<ApiResponse<Appointment>>('/appointments', data);
+    const response = await this.axiosInstance.post<ApiResponse<Appointment>>('/api/appointments', data);
     return response.data;
   }
   
   async updateAppointment(appointmentId: string, data: UpdateAppointmentRequest): Promise<ApiResponse<Appointment>> {
-    const response = await this.axiosInstance.patch<ApiResponse<Appointment>>(`/appointments/${appointmentId}`, data);
+    const response = await this.axiosInstance.put<ApiResponse<Appointment>>(`/api/appointments/${appointmentId}`, data);
     return response.data;
   }
   
   async deleteAppointment(appointmentId: string): Promise<ApiResponse<void>> {
-    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/appointments/${appointmentId}`);
+    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/api/appointments/${appointmentId}`);
     return response.data;
   }
   
   async updateAppointmentStatus(appointmentId: string, status: string): Promise<ApiResponse<Appointment>> {
-    const response = await this.axiosInstance.patch<ApiResponse<Appointment>>(`/appointments/${appointmentId}/status`, { status });
+    const response = await this.axiosInstance.patch<ApiResponse<Appointment>>(`/api/appointments/${appointmentId}/status`, { status });
     return response.data;
   }
   
@@ -686,8 +665,29 @@ export class ApiClient {
     startDate?: string; 
     endDate?: string 
   }): Promise<ApiResponse<PaginatedResponse<AuditLog>>> {
-    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<AuditLog>>>('/audit/logs', { params });
-    return response.data;
+    try {
+      const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<AuditLog>>>('/audit/logs', { params });
+      return response.data;
+    } catch (error: any) {
+      // Handle 404 error specifically
+      if (error.response?.status === 404) {
+        console.warn('[API] Audit logs endpoint not found or not yet implemented');
+        // Return an empty response with the correct structure
+        return {
+          status: 'success',
+          data: {
+            data: [],
+            pagination: {
+              page: 1,
+              limit: 10,
+              total: 0,
+              pages: 0
+            }
+          }
+        };
+      }
+      throw error;
+    }
   }
 
   async createAuditLog(data: {
@@ -834,7 +834,7 @@ export class ApiClient {
 
   // Search endpoints
   async searchImages(params: SearchParams): Promise<ApiResponse<PaginatedResponse<Image>>> {
-    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<Image>>>('/search/images', { params });
+    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<Image>>>('/v1/search/images', { params });
     return response.data;
   }
 
@@ -922,10 +922,10 @@ export class ApiClient {
     return response.data;
   }
 
-  // Helper methods
+  // Helper methods - REMOVED localStorage methods
   private handleAuthResponse(data: AuthResponse): void {
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('refreshToken', data.refreshToken);
+    // NextAuth handles storing the tokens, so we don't need to do anything here
+    console.log('Authentication successful');
   }
 
   // Generic request methods
@@ -961,46 +961,46 @@ export class ApiClient {
 
   // Provider Availability endpoints
   async getProviderWorkingHours(): Promise<ApiResponse<any>> {
-    const response = await this.axiosInstance.get<ApiResponse<any>>('/provider/availability/hours');
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/providers/availability/hours');
     return response.data;
   }
 
   async saveProviderWorkingHours(workingHours: any): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.post<ApiResponse<any>>('/provider/availability/hours', { workingHours });
+    return this.axiosInstance.post<ApiResponse<any>>('/providers/availability/hours', { workingHours });
   }
 
   async getProviderAvailabilityBlocks(): Promise<ApiResponse<any>> {
-    const response = await this.axiosInstance.get<ApiResponse<any>>('/provider/availability/blocks');
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/providers/availability/blocks');
     return response.data;
   }
 
   async addProviderAvailabilityBlock(block: any): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.post<ApiResponse<any>>('/provider/availability/blocks', block);
+    return this.axiosInstance.post<ApiResponse<any>>('/providers/availability/blocks', { block });
   }
 
   async removeProviderAvailabilityBlock(blockId: string): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.delete<ApiResponse<any>>(`/provider/availability/blocks/${blockId}`);
+    return this.axiosInstance.delete<ApiResponse<any>>(`/providers/availability/blocks/${blockId}`);
   }
 
   async saveProviderAvailabilityBlocks(blocks: any[]): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.put<ApiResponse<any>>('/provider/availability/blocks', { blocks });
+    return this.axiosInstance.put<ApiResponse<any>>('/providers/availability/blocks', { blocks });
   }
 
   async getProviderBlockedTimes(): Promise<ApiResponse<any>> {
-    const response = await this.axiosInstance.get<ApiResponse<any>>('/provider/availability/blocked');
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/providers/availability/blocked');
     return response.data;
   }
 
   async addProviderBlockedTime(blockedTime: any): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.post<ApiResponse<any>>('/provider/availability/blocked', blockedTime);
+    return this.axiosInstance.post<ApiResponse<any>>('/providers/availability/blocked', { blockedTime });
   }
 
   async removeProviderBlockedTime(blockedTimeId: string): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.delete<ApiResponse<any>>(`/provider/availability/blocked/${blockedTimeId}`);
+    return this.axiosInstance.delete<ApiResponse<any>>(`/providers/availability/blocked/${blockedTimeId}`);
   }
 
   async saveProviderBlockedTimes(blockedTimes: any[]): Promise<AxiosResponse<ApiResponse<any>>> {
-    return this.axiosInstance.put<ApiResponse<any>>('/provider/availability/blocked', { blockedTimes });
+    return this.axiosInstance.put<ApiResponse<any>>('/providers/availability/blocked', { blockedTimes });
   }
 
   // Patient Analytics endpoints
@@ -1213,6 +1213,239 @@ export class ApiClient {
       { status, rejectionReason }
     );
     return response.data;
+  }
+
+  // Analytics endpoints
+  async getSystemMetrics(): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/analytics/system');
+    return response.data;
+  }
+
+  async getUserMetrics(userId: string): Promise<ApiResponse<{
+    appointments: {
+      total: number;
+      upcoming: number;
+      completed: number;
+      cancelled: number;
+    };
+    images: {
+      total: number;
+      recentUploads: number;
+      storageUsed: string;
+    };
+    messages: {
+      total: number;
+      unread: number;
+    };
+    recentActivity: any[];
+  }>> {
+    try {
+      const response = await this.axiosInstance.get<ApiResponse<{
+        appointments: {
+          total: number;
+          upcoming: number;
+          completed: number;
+          cancelled: number;
+        };
+        images: {
+          total: number;
+          recentUploads: number;
+          storageUsed: string;
+        };
+        messages: {
+          total: number;
+          unread: number;
+        };
+        recentActivity: any[];
+      }>>(`/analytics/users/${userId}/metrics`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching user metrics:', error);
+      throw error;
+    }
+  }
+
+  async getProviderAnalytics(providerId: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/providers/analytics', {
+      params: { providerId }
+    });
+    return response.data;
+  }
+
+  async getFileAccessHistory(fileId: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>(`/analytics/files/${fileId}/history`);
+    return response.data;
+  }
+
+  // Health Metric endpoints
+  async createHealthMetric(data: Partial<HealthMetricResponse>): Promise<ApiResponse<HealthMetricResponse>> {
+    const response = await this.axiosInstance.post<ApiResponse<HealthMetricResponse>>('/v1/patient/health-metrics', data);
+    return response.data;
+  }
+
+  /**
+   * Get health metrics for a patient
+   * @param params Object containing patientId and optional date range
+   * @returns Promise with health metrics data
+   */
+  async getHealthMetrics(params: { 
+    patientId: string, 
+    startDate?: string, 
+    endDate?: string 
+  }): Promise<ApiResponse<any>> {
+    if (!params.patientId) {
+      throw new Error('Patient ID is required');
+    }
+    
+    try {
+      const response = await this.axiosInstance.get<ApiResponse<any>>(`/api/v1/patient/${params.patientId}/health-metrics`, {
+        params: {
+          startDate: params.startDate,
+          endDate: params.endDate
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching health metrics:', error);
+      return {
+        status: 'error',
+        error: {
+          message: error instanceof Error ? error.message : 'Failed to retrieve health metrics',
+          code: 'FETCH_ERROR'
+        }
+      } as ApiResponse<any>;
+    }
+  }
+
+  async updatePatientSettings(settings: {
+    personalInfo: {
+      firstName: string;
+      lastName: string;
+      dateOfBirth: string;
+      phone: string;
+      email: string;
+      emergencyContact: {
+        name: string;
+        relationship: string;
+        phone: string;
+      };
+    };
+    privacy: {
+      shareDataWithProviders: boolean;
+      allowImageSharing: boolean;
+      showProfileToOtherPatients: boolean;
+      allowAnonymousDataUse: boolean;
+    };
+    notifications: {
+      emailNotifications: boolean;
+      smsNotifications: boolean;
+      appointmentReminders: boolean;
+      imageShareNotifications: boolean;
+      providerMessages: boolean;
+      marketingEmails: boolean;
+    };
+    communication: {
+      preferredLanguage: string;
+      preferredContactMethod: string;
+      preferredAppointmentReminder: string;
+    };
+  }): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.put<ApiResponse<any>>('/v1/patient/settings', settings);
+    return response.data;
+  }
+
+  // Patient specific methods
+  async getPatientProviders(): Promise<ApiResponse<any[]>> {
+    const response = await this.axiosInstance.get<ApiResponse<any[]>>('/api/patients/providers');
+    return response.data;
+  }
+
+  async getPatientImages(): Promise<ApiResponse<PaginatedResponse<Image>>> {
+    const response = await this.axiosInstance.get<ApiResponse<PaginatedResponse<Image>>>('/api/images', {
+      params: {
+        role: 'PATIENT'
+      }
+    });
+    return response.data;
+  }
+
+  async getPatientSharedImages(): Promise<ApiResponse<any[]>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/api/images', {
+      params: {
+        role: 'PATIENT',
+        shared: true
+      }
+    });
+    
+    // Handle the nested response structure
+    if (response.data.status === 'success' && response.data.data?.images) {
+      return {
+        status: 'success',
+        data: response.data.data.images
+      };
+    }
+    
+    return {
+      status: 'success',
+      data: []
+    };
+  }
+
+  async shareImage(data: {
+    providerId: string;
+    imageId: string;
+    expiryDays: number;
+    allowDownload: boolean;
+  }): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.post<ApiResponse<any>>(`/api/images/${data.imageId}/share`, {
+      expiresIn: data.expiryDays * 24 * 60 * 60, // Convert days to seconds
+      recipientEmail: data.providerId // Using providerId as recipientEmail for now
+    });
+    return response.data;
+  }
+
+  async revokeImageAccess(shareId: string): Promise<ApiResponse<void>> {
+    const response = await this.axiosInstance.delete<ApiResponse<void>>(`/api/images/${shareId}/share`);
+    return response.data;
+  }
+
+  async getProviderStatistics(providerId: string): Promise<ApiResponse<any>> {
+    const response = await this.axiosInstance.get<ApiResponse<any>>('/providers/analytics', {
+      params: { providerId }
+    });
+    return response.data;
+  }
+
+  async createPatient(data: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string;
+    dateOfBirth: string;
+    role: string;
+    isActive: boolean;
+  }): Promise<ApiResponse<User>> {
+    // Transform the data to match backend expectations
+    const patientData = {
+      username: `${data.firstName.toLowerCase()}.${data.lastName.toLowerCase()}`,
+      email: data.email,
+      password: Math.random().toString(36).slice(-8), // Generate a random password
+      role: 'PATIENT' as const,
+      name: `${data.firstName} ${data.lastName}`,
+      isActive: true,
+      phone: data.phone,
+      dateOfBirth: data.dateOfBirth
+    };
+
+    // First create the user
+    const userResponse = await this.axiosInstance.post<ApiResponse<User>>('/users', patientData);
+    
+    // Then create the provider-patient relationship
+    await this.axiosInstance.post<ApiResponse<any>>('/providers/patients', {
+      patientId: userResponse.data.data.id
+    });
+
+    return userResponse.data;
   }
 }
 

@@ -78,7 +78,7 @@ export const BookAppointment: React.FC<BookAppointmentProps> = ({
     queryKey: ['availability', selectedProvider?.id, selectedDate],
     queryFn: async () => {
       if (!selectedProvider?.id || !selectedDate) return { data: { availableSlots: [] } };
-      const response = await apiClient.getDoctorAppointments(selectedProvider.id, {
+      const response = await apiClient.getProviderAppointments(selectedProvider.id, {
         startDate: startOfDay(selectedDate).toISOString(),
         endDate: addDays(startOfDay(selectedDate), 1).toISOString()
       });

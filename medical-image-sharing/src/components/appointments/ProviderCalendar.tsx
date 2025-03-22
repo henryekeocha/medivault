@@ -132,7 +132,7 @@ export const ProviderCalendar: React.FC = () => {
     queryFn: async () => {
       if (!providerId) return { data: { items: [] } };
       
-      const response = await ApiClient.getInstance().getDoctorAppointments(providerId, {
+      const response = await ApiClient.getInstance().getProviderAppointments(providerId, {
         startDate: dateRange.start.toISOString(),
         endDate: dateRange.end.toISOString(),
       });

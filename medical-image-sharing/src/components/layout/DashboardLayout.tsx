@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Drawer,
@@ -22,11 +22,14 @@ import {
   Event as EventIcon,
   Devices as DevicesIcon,
   Gavel as AuditIcon,
+  Message as MessageIcon,
 } from '@mui/icons-material';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { routes, RoutePath, UserRole, isRouteForRole, DEFAULT_ROUTES, getRoutesByRole } from '@/config/routes';
 import { Route } from 'next';
+import { useSession } from 'next-auth/react';
+import { Role } from '@prisma/client';
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 65;
@@ -49,70 +52,169 @@ interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
+// Add utility function to safely match role strings
+function getRoleEnum(roleString: string | Role): Role {
+  // If it's already a Role enum value, return it
+  if (typeof roleString !== 'string') {
+    return roleString;
+  }
+  
+  // Convert string representation to Role enum
+  switch(roleString) {
+    case 'Admin':
+    case 'ADMIN':
+      return Role.ADMIN;
+    case 'Provider':
+    case 'PROVIDER':
+      return Role.PROVIDER;
+    case 'Patient':
+    case 'PATIENT':
+      return Role.PATIENT;
+    default:
+      console.error(`Unknown role: ${roleString}`);
+      // Default to PATIENT as fallback
+      return Role.PATIENT;
+  }
+}
+
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(true);
   const theme = useTheme();
   const router = useRouter();
   const pathname = usePathname();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, checkAuth } = useAuth();
+  const { data: session, status: sessionStatus } = useSession();
+  const [isLocallyAuthenticated, setIsLocallyAuthenticated] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const authCheckTimeoutRef = React.useRef<NodeJS.Timeout>();
 
-  // Add effect to handle authentication and routing
+  // Enhanced authentication check
   useEffect(() => {
-    console.log('Current pathname:', pathname);
-    console.log('Auth state:', { user, isAuthenticated });
+    const checkAuthentication = async () => {
+      // Clear any existing timeout
+      if (authCheckTimeoutRef.current) {
+        clearTimeout(authCheckTimeoutRef.current);
+      }
+
+      // Set a timeout to prevent infinite checking
+      authCheckTimeoutRef.current = setTimeout(() => {
+        setIsCheckingAuth(false);
+        setIsInitialLoad(false);
+      }, 5000);
+
+      try {
+        // First check NextAuth session
+        if (sessionStatus === 'authenticated' && session?.user) {
+          setIsLocallyAuthenticated(true);
+          
+          // If custom auth context says we're not authenticated but NextAuth says we are,
+          // update the custom auth context
+          if (!isAuthenticated && session.user) {
+            console.log('Found NextAuth session but custom auth is not updated, syncing state...');
+            setIsCheckingAuth(true);
+            await checkAuth();
+          }
+        } else {
+          // Fallback to localStorage token check
+          const token = localStorage.getItem('token');
+          const hasToken = !!token;
+          
+          if (hasToken) {
+            setIsLocallyAuthenticated(true);
+            
+            if (!isAuthenticated) {
+              setIsCheckingAuth(true);
+              await checkAuth();
+            }
+          } else {
+            setIsLocallyAuthenticated(false);
+          }
+        }
+      } catch (error) {
+        console.error('Authentication check failed:', error);
+      } finally {
+        setIsCheckingAuth(false);
+        setIsInitialLoad(false);
+        if (authCheckTimeoutRef.current) {
+          clearTimeout(authCheckTimeoutRef.current);
+        }
+      }
+    };
+
+    checkAuthentication();
+
+    // Cleanup
+    return () => {
+      if (authCheckTimeoutRef.current) {
+        clearTimeout(authCheckTimeoutRef.current);
+      }
+    };
+  }, [isAuthenticated, checkAuth, session, sessionStatus]);
+
+  // Handle routing based on auth state
+  useEffect(() => {
+    // Skip if still loading or checking
+    if (isInitialLoad || isCheckingAuth) {
+      return;
+    }
+
+    const isUserAuthenticated = sessionStatus === 'authenticated' || isAuthenticated || isLocallyAuthenticated;
     
-    if (!isAuthenticated) {
+    if (!isUserAuthenticated) {
       console.log('User not authenticated, redirecting to login');
-      const cleanPath = pathname.replace('/(protected)', '');
-      const redirectUrl = `/login${cleanPath !== '/' ? `?redirect=${cleanPath}` : ''}` as Route;
+      const cleanPath = pathname ? pathname.replace('/(protected)', '') : '/';
+      const redirectUrl = `/auth/login${cleanPath !== '/' ? `?redirect=${cleanPath}` : ''}` as Route;
       router.replace(redirectUrl);
       return;
     }
 
-    if (pathname === '/' && user?.role) {
-      console.log('Redirecting to default route for role:', user.role);
-      const userRole = user.role as keyof typeof DEFAULT_ROUTES;
-      const defaultRoute = DEFAULT_ROUTES[userRole];
-      router.replace(defaultRoute as Route);
+    // Handle role-specific routing
+    const userRole = (session?.user?.role || user?.role) as keyof typeof DEFAULT_ROUTES;
+    if (userRole) {
+      if (pathname === '/') {
+        const defaultRoute = DEFAULT_ROUTES[userRole] || '/dashboard';
+        router.replace(defaultRoute as Route);
+        return;
+      }
+
+      // Check for unauthorized role access
+      const roleValue = String(userRole).toUpperCase();
+      const isAdminPath = pathname?.startsWith('/admin');
+      const isProviderPath = pathname?.startsWith('/provider');
+      const isPatientPath = pathname?.startsWith('/patient');
+      
+      if (
+        (isAdminPath && roleValue !== 'ADMIN') ||
+        (isProviderPath && roleValue !== 'PROVIDER') ||
+        (isPatientPath && roleValue !== 'PATIENT')
+      ) {
+        const correctPath = DEFAULT_ROUTES[userRole] || '/dashboard';
+        router.replace(correctPath as Route);
+      }
     }
-  }, [pathname, isAuthenticated, user, router]);
+  }, [pathname, isAuthenticated, isLocallyAuthenticated, user, router, isCheckingAuth, session, sessionStatus, isInitialLoad]);
 
   const isHomePage = pathname === '/';
-  const shouldShowSidebar = isAuthenticated && !isHomePage;
+  const shouldShowSidebar = (isAuthenticated || isLocallyAuthenticated || sessionStatus === 'authenticated') && !isHomePage;
 
   const handleNavigation = (path: RoutePath) => {
     try {
       console.log('Attempting navigation to:', path);
-      console.log('Current user role:', user?.role);
       
       // If path is a function (for dynamic routes), return early
       if (typeof path === 'function') {
         console.error('Dynamic routes should be called with an ID parameter');
         return;
       }
-
-      // Clean up the path by removing any (protected) segments
-      const cleanPath = path.replace('/(protected)', '') as Route;
       
-      // Ensure the path exists in our routes configuration
-      const isValidPath = Object.values(routes).some(routeGroup => 
-        Object.values(routeGroup).some(route => 
-          typeof route === 'string' && route === path
-        )
-      );
-
-      if (!isValidPath) {
-        console.error(`Invalid route path: ${cleanPath}`);
-        return;
+      // Remove any route group prefixes that might confuse Next.js
+      let cleanPath = path;
+      if (cleanPath.includes('(protected)')) {
+        cleanPath = cleanPath.replace('/(protected)', '').replace('(protected)/', '') as Route;
       }
-
-      // Check if the user has access to this route
-      if (user?.role && !isRouteForRole(cleanPath as Route, user.role as UserRole)) {
-        console.error(`User does not have access to route: ${cleanPath}`);
-        return;
-      }
-
-      console.log('Navigation checks passed, pushing to:', cleanPath);
+      
+      console.log('Navigation to path:', cleanPath);
       router.push(cleanPath as Route);
     } catch (error) {
       console.error('Navigation error:', error);
@@ -122,111 +224,217 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const getNavigationItems = (): NavigationItem[] => {
     if (!user?.role) return [];
 
-    const userRole = user.role as UserRole;
-    const roleRoutes = getRoutesByRole(userRole);
+    // Convert Role to a consistent string format
+    const roleValue = typeof user.role === 'string' 
+      ? (user.role.toUpperCase() === 'ADMIN' 
+        ? 'ADMIN' 
+        : user.role.toUpperCase() === 'PROVIDER' 
+          ? 'PROVIDER' 
+          : 'PATIENT')
+      : String(user.role);
+    
+    console.log('Getting navigation items for role:', roleValue);
     
     const baseItems: NavigationItem[] = [
       {
         text: 'Dashboard',
         icon: <DashboardIcon />,
-        path: roleRoutes.dashboard,
+        path: roleValue === 'ADMIN' 
+          ? routes.admin.dashboard 
+          : roleValue === 'PROVIDER'
+            ? routes.provider.dashboard
+            : routes.patient.dashboard,
       },
     ];
 
     let roleSpecificItems: NavigationItem[] = [];
 
-    switch (userRole) {
-      case 'Admin':
+    // Use the string value for switch case matching
+    switch (roleValue) {
+      case 'ADMIN':
         roleSpecificItems = [
-          ...(roleRoutes.users ? [{
+          {
             text: 'Users',
             icon: <PersonIcon />,
-            path: roleRoutes.users,
-          }] : []),
-          ...(roleRoutes.analytics ? [{
+            path: routes.admin.users,
+          },
+          {
+            text: 'Statistics',
+            icon: <AnalyticsIcon />,
+            path: routes.admin.stats,
+          },
+          {
             text: 'Analytics',
             icon: <AnalyticsIcon />,
-            path: roleRoutes.analytics,
-          }] : []),
-          ...(roleRoutes.settings ? [{
+            path: routes.admin.analytics,
+          },
+          {
+            text: 'Audit',
+            icon: <AuditIcon />,
+            path: routes.admin.audit,
+          },
+          {
+            text: 'Storage',
+            icon: <DevicesIcon />,
+            path: routes.admin.storage,
+          },
+          {
             text: 'Settings',
             icon: <SettingsIcon />,
-            path: roleRoutes.settings,
-          }] : []),
-          ...(roleRoutes.logs ? [{
-            text: 'Logs',
-            icon: <AuditIcon />,
-            path: roleRoutes.logs,
-          }] : []),
-        ];
-        break;
-
-      case 'Provider':
-        roleSpecificItems = [
-          ...(roleRoutes.images ? [{
+            path: routes.admin.settings,
+          },
+          {
             text: 'Images',
             icon: <ImageIcon />,
-            path: roleRoutes.images,
-          }] : []),
-          ...(roleRoutes.patients ? [{
+            path: routes.admin.images,
+          },
+          {
+            text: 'Reports',
+            icon: <AnalyticsIcon />,
+            path: routes.dashboard.reports,
+          },
+          {
             text: 'Patients',
             icon: <PersonIcon />,
-            path: roleRoutes.patients,
-          }] : []),
-          ...(roleRoutes.settings ? [{
-            text: 'Settings',
-            icon: <SettingsIcon />,
-            path: roleRoutes.settings,
-          }] : []),
-          ...(roleRoutes.devices ? [{
-            text: 'Devices',
-            icon: <DevicesIcon />,
-            path: roleRoutes.devices,
-          }] : []),
+            path: routes.patients.list,
+          },
+          {
+            text: 'Providers',
+            icon: <PersonIcon />,
+            path: routes.providers.list,
+          },
+          {
+            text: 'Appointments',
+            icon: <EventIcon />,
+            path: routes.admin.appointments,
+          },
+          {
+            text: 'Messages',
+            icon: <MessageIcon />,
+            path: routes.admin.messages,
+          },
+          {
+            text: 'Profile',
+            icon: <PersonIcon />,
+            path: routes.profile.view,
+          },
         ];
         break;
-
-      case 'Patient':
+        
+      case 'PROVIDER':
         roleSpecificItems = [
-          ...(roleRoutes.images ? [{
-            text: 'My Images',
+          {
+            text: 'Patients',
+            icon: <PersonIcon />,
+            path: routes.provider.patients,
+          },
+          {
+            text: 'Images',
             icon: <ImageIcon />,
-            path: roleRoutes.images,
-          }] : []),
-          ...(roleRoutes.upload ? [{
+            path: routes.provider.images,
+          },
+          {
             text: 'Upload',
             icon: <UploadIcon />,
-            path: roleRoutes.upload,
-          }] : []),
-          ...(roleRoutes.shares ? [{
+            path: routes.provider.upload,
+          },
+          {
             text: 'Share',
             icon: <ShareIcon />,
-            path: roleRoutes.shares,
-          }] : []),
-          ...(roleRoutes.appointments ? [{
-            text: 'My Appointments',
+            path: routes.provider.share,
+          },
+          {
+            text: 'Analytics',
+            icon: <AnalyticsIcon />,
+            path: routes.provider.analytics,
+          },
+          {
+            text: 'Appointments',
             icon: <EventIcon />,
-            path: roleRoutes.appointments,
-          }] : []),
-          ...(roleRoutes.providers ? [{
-            text: 'My Providers',
+            path: routes.provider.appointments,
+          },
+          {
+            text: 'Messages',
+            icon: <MessageIcon />,
+            path: routes.provider.messages,
+          },
+          {
+            text: 'Analysis',
+            icon: <AnalyticsIcon />,
+            path: routes.provider.analysis,
+          },
+          {
+            text: 'Profile',
             icon: <PersonIcon />,
-            path: roleRoutes.providers,
-          }] : []),
-          ...(roleRoutes.settings ? [{
+            path: routes.provider.profile,
+          },
+          {
             text: 'Settings',
             icon: <SettingsIcon />,
-            path: roleRoutes.settings,
-          }] : []),
-          ...(roleRoutes.devices ? [{
-            text: 'Devices',
-            icon: <DevicesIcon />,
-            path: roleRoutes.devices,
-          }] : []),
+            path: routes.provider.settings,
+          },
+        ];
+        break;
+        
+      case 'PATIENT':
+      default:
+        roleSpecificItems = [
+          {
+            text: 'My Images',
+            icon: <ImageIcon />,
+            path: routes.patient.images,
+          },
+          {
+            text: 'Shared Files',
+            icon: <ShareIcon />,
+            path: routes.patient.share,
+          },
+          {
+            text: 'My Appointments',
+            icon: <EventIcon />,
+            path: routes.patient.appointments,
+          },
+          {
+            text: 'Messages',
+            icon: <MessageIcon />,
+            path: routes.patient.messages,
+          },
+          {
+            text: 'Records',
+            icon: <AnalyticsIcon />,
+            path: routes.patient.records,
+          },
+          {
+            text: 'My Providers',
+            icon: <PersonIcon />,
+            path: routes.patient.providers,
+          },
+          {
+            text: 'Chatbot',
+            icon: <MessageIcon />,
+            path: routes.patient.chatbot,
+          },
+          {
+            text: 'Profile',
+            icon: <PersonIcon />,
+            path: routes.profile.view,
+          },
+          {
+            text: 'Settings',
+            icon: <SettingsIcon />,
+            path: routes.patient.settings,
+          },
+          {
+            text: 'Account',
+            icon: <PersonIcon />,
+            path: routes.account.settings,
+          },
         ];
         break;
     }
 
+    // Log the items for debugging
+    console.log('Navigation items:', [...baseItems, ...roleSpecificItems]);
     return [...baseItems, ...roleSpecificItems];
   };
 

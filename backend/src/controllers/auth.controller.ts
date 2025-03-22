@@ -7,6 +7,7 @@ import { Role, User } from '@prisma/client';
 import { AppError } from '../utils/appError.js';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AuthUser } from '../middleware/auth.js';
+import crypto from 'crypto';
 
 // Generate JWT token
 const signToken = (id: string): string => {
@@ -27,26 +28,27 @@ const signToken = (id: string): string => {
   );
 };
 
+const signRefreshToken = (id: string): string => {
+  const secret = process.env.JWT_REFRESH_SECRET || 'refresh-secret';
+  return jwt.sign(
+    { 
+      sub: id,
+      id: id,
+      iat: Math.floor(Date.now() / 1000)
+    }, 
+    secret, 
+    {
+      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
+    } as jwt.SignOptions
+  );
+};
+
 // Create and send token
 const createSendToken = (user: Partial<User>, statusCode: number, res: Response) => {
   const token = signToken(user.id!);
   
   // Generate a refresh token
-  const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET || 'refresh-token-secret';
-  const refreshTokenExpiry = process.env.REFRESH_TOKEN_EXPIRY || '7d';
-  const refreshToken = jwt.sign(
-    { 
-      sub: user.id, 
-      id: user.id,
-      role: user.role,
-      email: user.email,
-      iat: Math.floor(Date.now() / 1000)
-    }, 
-    refreshTokenSecret, 
-    {
-      expiresIn: refreshTokenExpiry
-    } as jwt.SignOptions
-  );
+  const refreshToken = signRefreshToken(user.id!);
 
   // Remove password from output
   const { password, twoFactorSecret, ...userWithoutSensitiveData } = user;
@@ -64,46 +66,70 @@ const createSendToken = (user: Partial<User>, statusCode: number, res: Response)
 export const register = catchAsync(async (req: Request, res: Response) => {
   const { username, email, password, role, name = username } = req.body;
 
-  // Check if user already exists
-  const existingUser = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { email },
-        { username }
-      ]
-    }
-  });
+  // Check if user already exists using raw SQL to avoid schema issues
+  const existingUsers = await prisma.$queryRaw`
+    SELECT * FROM "User" WHERE email = ${email} OR username = ${username} LIMIT 1
+  `;
 
-  if (existingUser) {
+  if (Array.isArray(existingUsers) && existingUsers.length > 0) {
     throw new AppError('Email or username already exists', 400);
   }
 
   // Hash password
   const hashedPassword = await bcrypt.hash(password, 12);
 
-  // Create user with proper type checking
-  const user = await prisma.user.create({
-    data: {
-      username,
-      email,
-      name,
-      password: hashedPassword,
-      role: role ? (role as Role) : Role.PATIENT,
-      twoFactorEnabled: false,
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    }
-  });
+  // Create new user with raw SQL to avoid schema issues
+  const userId = crypto.randomUUID();
+  await prisma.$executeRaw`
+    INSERT INTO "User" (
+      id, email, name, username, password, role, 
+      "isActive", "twoFactorEnabled",
+      "createdAt", "updatedAt"
+    ) 
+    VALUES (
+      ${userId}::uuid, ${email}, ${name}, ${username}, ${hashedPassword}, 
+      ${role ? role : 'PATIENT'}::Role, 
+      true, false,
+      NOW(), NOW()
+    )
+  `;
 
-  createSendToken(user, 201, res);
+  // Get the newly created user
+  const newUser = await prisma.$queryRaw<any[]>`
+    SELECT 
+      id, email, name, username, role, "isActive", "twoFactorEnabled",
+      "createdAt", "updatedAt"
+    FROM "User" 
+    WHERE id = ${userId}::uuid
+  `;
+
+  // Create JWT token
+  const token = signToken(userId);
+  const refreshToken = signRefreshToken(userId);
+
+  // Send response
+  res.status(201).json({
+    status: 'success',
+    data: {
+      token,
+      refreshToken,
+      user: newUser[0],
+    },
+  });
 });
 
 export const login = catchAsync(async (req: Request, res: Response) => {
+  console.log('Login attempt received:', {
+    email: req.body.email,
+    hasPassword: !!req.body.password,
+    timestamp: new Date().toISOString()
+  });
+
   const { email, password, twoFactorCode } = req.body;
 
   // Check if email and password exist
   if (!email || !password) {
+    console.log('Login failed: Missing credentials');
     throw new AppError('Please provide email and password', 400);
   }
 
@@ -122,17 +148,26 @@ export const login = catchAsync(async (req: Request, res: Response) => {
     }
   });
 
+  console.log('User lookup result:', {
+    found: !!currentUser,
+    email: email,
+    isActive: currentUser?.isActive
+  });
+
   if (!currentUser || !(await bcrypt.compare(password, currentUser.password))) {
+    console.log('Login failed: Invalid credentials');
     throw new AppError('Incorrect email or password', 401);
   }
 
   // Check if user is active
   if (currentUser.isActive === false) {
+    console.log('Login failed: Account deactivated');
     throw new AppError('Your account has been deactivated', 401);
   }
 
   // Check 2FA if enabled
   if (currentUser.twoFactorEnabled) {
+    console.log('2FA required for user:', email);
     if (!twoFactorCode) {
       return res.status(200).json({
         status: 'success',
@@ -142,16 +177,19 @@ export const login = catchAsync(async (req: Request, res: Response) => {
     }
 
     if (!currentUser.twoFactorSecret) {
+      console.log('2FA error: Secret not found');
       throw new AppError('2FA secret not found', 500);
     }
 
     const isValid = authenticator.check(twoFactorCode, currentUser.twoFactorSecret);
 
     if (!isValid) {
+      console.log('2FA validation failed');
       throw new AppError('Invalid 2FA code', 401);
     }
   }
 
+  console.log('Login successful for user:', email);
   createSendToken(currentUser, 200, res);
 });
 

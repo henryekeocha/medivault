@@ -1,35 +1,40 @@
-import { CognitoIdentityProviderClient, AdminListUserAuthEventsCommand, AdminListDevicesCommand, AdminForgetDeviceCommand, AdminUpdateDeviceStatusCommand, } from '@aws-sdk/client-cognito-identity-provider';
+import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 /**
- * Service for tracking and managing user devices in Cognito
+ * Service for tracking and managing user devices using the database
  */
 export class DeviceTrackingService {
-    client;
-    userPoolId;
-    constructor() {
-        // Initialize the Cognito client
-        this.client = new CognitoIdentityProviderClient({
-            region: process.env.AWS_REGION || 'us-east-1',
-        });
-        // Set the User Pool ID from environment variables
-        this.userPoolId = process.env.COGNITO_USER_POOL_ID || '';
-        if (!this.userPoolId) {
-            logger.warn('Cognito User Pool ID not set in environment variables');
-        }
-    }
     /**
      * Get a list of devices for a user
-     * @param username The username of the user
+     * @param userId The ID of the user
      * @returns List of devices
      */
-    async listDevices(username) {
+    async listDevices(userId) {
         try {
-            const command = new AdminListDevicesCommand({
-                UserPoolId: this.userPoolId,
-                Username: username,
-            });
-            const response = await this.client.send(command);
-            return response.Devices || [];
+            // Use raw query to avoid schema issues until migration is applied
+            const devices = await prisma.$queryRaw `
+        SELECT 
+          id, 
+          "userId", 
+          "deviceName", 
+          "deviceType", 
+          "lastUsedAt", 
+          remembered, 
+          browser, 
+          os 
+        FROM "UserDevice" 
+        WHERE "userId" = ${userId}::uuid 
+        ORDER BY "lastUsedAt" DESC
+      `;
+            return devices.map(device => ({
+                deviceKey: device.id,
+                deviceName: device.deviceName,
+                deviceType: device.deviceType,
+                lastUsedAt: device.lastUsedAt,
+                remembered: device.remembered,
+                browser: device.browser,
+                os: device.os,
+            }));
         }
         catch (error) {
             logger.error('Error listing devices:', error);
@@ -38,18 +43,38 @@ export class DeviceTrackingService {
     }
     /**
      * Get authentication events for a user
-     * @param username The username of the user
+     * @param userId The ID of the user
      * @returns List of authentication events
      */
-    async listAuthEvents(username) {
+    async listAuthEvents(userId) {
         try {
-            const command = new AdminListUserAuthEventsCommand({
-                UserPoolId: this.userPoolId,
-                Username: username,
-                MaxResults: 25, // Limit to 25 most recent events
-            });
-            const response = await this.client.send(command);
-            return response.AuthEvents || [];
+            // Use raw query to avoid schema issues until migration is applied
+            const events = await prisma.$queryRaw `
+        SELECT 
+          id, 
+          "userId", 
+          "eventType", 
+          "ipAddress", 
+          "deviceName", 
+          browser, 
+          os, 
+          success, 
+          "createdAt"
+        FROM "AuthEvent" 
+        WHERE "userId" = ${userId}::uuid 
+        ORDER BY "createdAt" DESC
+        LIMIT 25
+      `;
+            return events.map(event => ({
+                eventId: event.id,
+                eventType: event.eventType,
+                createdAt: event.createdAt,
+                ipAddress: event.ipAddress,
+                deviceName: event.deviceName,
+                browser: event.browser,
+                os: event.os,
+                success: event.success,
+            }));
         }
         catch (error) {
             logger.error('Error listing auth events:', error);
@@ -58,18 +83,18 @@ export class DeviceTrackingService {
     }
     /**
      * Forget (remove) a device
-     * @param username The username of the user
+     * @param userId The ID of the user
      * @param deviceKey The device key to forget
      * @returns Result of the operation
      */
-    async forgetDevice(username, deviceKey) {
+    async forgetDevice(userId, deviceKey) {
         try {
-            const command = new AdminForgetDeviceCommand({
-                UserPoolId: this.userPoolId,
-                Username: username,
-                DeviceKey: deviceKey,
-            });
-            return await this.client.send(command);
+            // Use raw query to avoid schema issues until migration is applied
+            await prisma.$executeRaw `
+        DELETE FROM "UserDevice" 
+        WHERE id = ${deviceKey}::uuid AND "userId" = ${userId}::uuid
+      `;
+            return { success: true };
         }
         catch (error) {
             logger.error('Error forgetting device:', error);
@@ -78,23 +103,63 @@ export class DeviceTrackingService {
     }
     /**
      * Update device status (remembered or not remembered)
-     * @param username The username of the user
+     * @param userId The ID of the user
      * @param deviceKey The device key to update
      * @param remembered Whether the device should be remembered
      * @returns Result of the operation
      */
-    async updateDeviceStatus(username, deviceKey, remembered) {
+    async updateDeviceStatus(userId, deviceKey, remembered) {
         try {
-            const command = new AdminUpdateDeviceStatusCommand({
-                UserPoolId: this.userPoolId,
-                Username: username,
-                DeviceKey: deviceKey,
-                DeviceRememberedStatus: remembered ? 'remembered' : 'not_remembered',
-            });
-            return await this.client.send(command);
+            // Use raw query to avoid schema issues until migration is applied
+            await prisma.$executeRaw `
+        UPDATE "UserDevice" 
+        SET remembered = ${remembered}, "updatedAt" = NOW()
+        WHERE id = ${deviceKey}::uuid AND "userId" = ${userId}::uuid
+      `;
+            return { success: true };
         }
         catch (error) {
             logger.error('Error updating device status:', error);
+            throw error;
+        }
+    }
+    /**
+     * Record a new authentication event
+     * @param userId The ID of the user
+     * @param eventData The event data
+     * @returns The created event
+     */
+    async recordAuthEvent(userId, eventData) {
+        try {
+            // Use raw query to avoid schema issues until migration is applied
+            const result = await prisma.$queryRaw `
+        INSERT INTO "AuthEvent" (
+          id, 
+          "userId", 
+          "eventType", 
+          "ipAddress", 
+          "deviceName", 
+          browser, 
+          os, 
+          success, 
+          "createdAt"
+        ) VALUES (
+          uuid_generate_v4(),
+          ${userId}::uuid,
+          ${eventData.eventType},
+          ${eventData.ipAddress},
+          ${eventData.deviceName || null},
+          ${eventData.browser || null},
+          ${eventData.os || null},
+          ${eventData.success},
+          NOW()
+        )
+        RETURNING id
+      `;
+            return { id: result[0].id };
+        }
+        catch (error) {
+            logger.error('Error recording auth event:', error);
             throw error;
         }
     }

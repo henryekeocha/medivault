@@ -1,16 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Role } from '@prisma/client';
-import { jwtVerify, JWTPayload as JoseJWTPayload } from 'jose';
-
-// Define token payload interface
-interface JWTPayload extends JoseJWTPayload {
-  sub: string;
-  role: Role;
-  email: string;
-  iat: number;
-  exp: number;
-}
+import { getToken } from 'next-auth/jwt';
+import { routes } from "@/config/routes";
 
 // Public routes that don't require authentication
 const publicRoutes = [
@@ -37,23 +29,61 @@ const DEFAULT_ROUTES: Record<string, string> = {
   PATIENT: '/patient/dashboard',
 };
 
+// List of paths that don't require authentication
+const publicPaths = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/verify-email',
+  '/api/auth',
+  '/api/health',
+  '/_next',
+  '/favicon.ico',
+  '/images',
+  '/fonts',
+];
+
+// Add debugging information
+function logRequest(req: NextRequest, note: string = '') {
+  if (process.env.NODE_ENV === 'development') {
+    const url = req.nextUrl.clone();
+    console.log(`[Middleware] ${note ? note + ' - ' : ''}${req.method} ${url.pathname}${url.search}`);
+  }
+}
+
 // Middleware to protect routes based on authentication and user role
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
-  // Allow public routes
-  if (publicRoutes.some(route => pathname.startsWith(route))) {
+  // Log all requests in development
+  logRequest(request);
+  
+  // Allow all auth-related API routes to pass through
+  if (pathname.startsWith('/api/auth/')) {
+    logRequest(request, 'Auth API Request');
     return NextResponse.next();
   }
   
-  // Allow API routes to be handled by API middleware
+  // Allow public routes
+  if (publicRoutes.some(route => pathname.startsWith(route))) {
+    logRequest(request, 'Public route - allowing');
+    return NextResponse.next();
+  }
+  
+  // For all other API requests
   if (pathname.startsWith('/api/')) {
     const response = NextResponse.next();
     
     // Add CORS headers for API routes
-    response.headers.set('Access-Control-Allow-Origin', process.env.NEXT_PUBLIC_FRONTEND_URL || '*');
+    const origin = request.headers.get('origin');
+    if (origin) {
+      response.headers.set('Access-Control-Allow-Origin', origin);
+    } else {
+      response.headers.set('Access-Control-Allow-Origin', 'http://localhost:3000');
+    }
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
     response.headers.set('Access-Control-Allow-Credentials', 'true');
     
     // Handle preflight requests
@@ -61,125 +91,99 @@ export async function middleware(request: NextRequest) {
       return new NextResponse(null, { headers: response.headers });
     }
     
+    // If it's an API request, let it through for now - the API routes will handle auth
+    if (pathname.startsWith('/api/v1/')) {
+      logRequest(request, 'API v1 route - allowing');
+      return response;
+    }
+    
+    logRequest(request, 'API route - allowing');
     return response;
   }
   
-  // Try to get token from cookies or authorization header
-  const token = getTokenFromRequest(request);
-  
-  // Redirect to login if no token is found
-  if (!token) {
-    console.log(`[Middleware] No token found, redirecting to login from: ${pathname}`);
-    const url = new URL('/login', request.url);
-    url.searchParams.set('returnUrl', pathname);
-    return NextResponse.redirect(url);
+  // Check if the path is public
+  if (publicPaths.some(path => pathname.startsWith(path) || pathname === path)) {
+    logRequest(request, 'Public path - allowing');
+    return NextResponse.next();
   }
-  
+
+  // Get the session token from NextAuth
   try {
-    // Verify token
-    const payload = await verifyToken(token);
-    
-    if (!payload) {
-      throw new Error('Invalid token payload');
+    const token = await getToken({
+      req: request,
+      secret: process.env.NEXTAUTH_SECRET,
+    });
+
+    // Debug token information
+    logRequest(request, `Token check result: ${token ? 'Valid token' : 'No token'}`);
+    if (token) {
+      logRequest(request, `Token data: id=${token.id}, role=${token.role}`);
+    }
+
+    // If no token is present, redirect to login
+    if (!token) {
+      logRequest(request, 'No token - redirecting to login');
+      const loginUrl = new URL('/auth/login', request.url);
+      loginUrl.searchParams.set('callbackUrl', encodeURIComponent(request.nextUrl.pathname));
+      return NextResponse.redirect(loginUrl);
     }
     
-    // Role-based access control
-    if (pathname.startsWith('/admin') && payload.role !== 'ADMIN') {
-      console.log(`[Middleware] Access denied to ${pathname} for role ${payload.role}`);
-      return NextResponse.redirect(new URL(DEFAULT_ROUTES[payload.role] || '/dashboard', request.url));
+    // Check if the user is accessing home route and has a role
+    if (pathname === '/' && token.role) {
+      // Determine the appropriate dashboard URL based on role
+      let dashboardUrl = '/dashboard';
+      const role = token.role as Role;
+      
+      if (role === Role.ADMIN) {
+        dashboardUrl = '/admin/dashboard';
+      } else if (role === Role.PROVIDER) {
+        dashboardUrl = '/provider/dashboard';
+      } else if (role === Role.PATIENT) {
+        dashboardUrl = '/patient/dashboard';
+      }
+      
+      logRequest(request, `Redirecting to ${dashboardUrl} based on role ${role}`);
+      return NextResponse.redirect(new URL(dashboardUrl, request.url));
     }
     
-    if (pathname.startsWith('/provider') && payload.role !== 'PROVIDER' && payload.role !== 'ADMIN') {
-      console.log(`[Middleware] Access denied to ${pathname} for role ${payload.role}`);
-      return NextResponse.redirect(new URL(DEFAULT_ROUTES[payload.role] || '/dashboard', request.url));
+    // Check if user is accessing a protected route that doesn't match their role
+    if (pathname.startsWith('/admin/') && token.role !== Role.ADMIN) {
+      logRequest(request, `Unauthorized access to admin route, redirecting to appropriate dashboard`);
+      const dashboardUrl = token.role === Role.PROVIDER ? '/provider/dashboard' : '/patient/dashboard';
+      return NextResponse.redirect(new URL(dashboardUrl, request.url));
     }
     
-    if (pathname.startsWith('/patient') && payload.role !== 'PATIENT' && payload.role !== 'ADMIN') {
-      console.log(`[Middleware] Access denied to ${pathname} for role ${payload.role}`);
-      return NextResponse.redirect(new URL(DEFAULT_ROUTES[payload.role] || '/dashboard', request.url));
+    if (pathname.startsWith('/provider/') && token.role !== Role.PROVIDER) {
+      logRequest(request, `Unauthorized access to provider route, redirecting to appropriate dashboard`);
+      const dashboardUrl = token.role === Role.ADMIN ? '/admin/dashboard' : '/patient/dashboard';
+      return NextResponse.redirect(new URL(dashboardUrl, request.url));
     }
     
-    // Add user info to headers for backend routes
-    const response = NextResponse.next();
-    response.headers.set('X-User-Id', payload.sub);
-    response.headers.set('X-User-Role', payload.role.toString());
-    response.headers.set('X-User-Email', payload.email);
+    if (pathname.startsWith('/patient/') && token.role !== Role.PATIENT) {
+      logRequest(request, `Unauthorized access to patient route, redirecting to appropriate dashboard`);
+      const dashboardUrl = token.role === Role.ADMIN ? '/admin/dashboard' : '/provider/dashboard';
+      return NextResponse.redirect(new URL(dashboardUrl, request.url));
+    }
     
-    return response;
+    // Token is valid, proceed with the request
+    logRequest(request, 'Valid token - proceeding with request');
+    return NextResponse.next();
   } catch (error) {
-    console.error('[Middleware] Token verification failed:', error);
-    
-    // Token is invalid, redirect to login
-    const url = new URL('/login', request.url);
-    url.searchParams.set('returnUrl', pathname);
-    return NextResponse.redirect(url);
+    console.error('Error validating session:', error);
+    // If there's an error checking the token, redirect to login
+    logRequest(request, `Session validation error - ${error}`);
+    const loginUrl = new URL('/auth/login', request.url);
+    loginUrl.searchParams.set('callbackUrl', encodeURIComponent(request.nextUrl.pathname));
+    return NextResponse.redirect(loginUrl);
   }
 }
-
-// Helper function to verify token
-const verifyToken = async (token: string): Promise<JWTPayload | null> => {
-  if (!token) return null;
-
-  try {
-    // Get JWT secret from environment variable
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      console.error('JWT_SECRET environment variable is not defined!');
-      return null;
-    }
-
-    const secret = new TextEncoder().encode(jwtSecret);
-    const { payload } = await jwtVerify(token, secret);
-    
-    // Validate payload structure
-    if (!payload.sub || !payload.exp) {
-      console.error('Token payload missing required claims:', payload);
-      return null;
-    }
-    
-    // Check if token is expired
-    const now = Math.floor(Date.now() / 1000);
-    if ((payload.exp as number) < now) {
-      console.error('Token has expired:', {
-        expiration: new Date((payload.exp as number) * 1000).toISOString(),
-        now: new Date(now * 1000).toISOString()
-      });
-      return null;
-    }
-    
-    return payload as JWTPayload;
-  } catch (error) {
-    console.error('Token verification failed:', error);
-    return null;
-  }
-};
-
-// Helper function to get token from request
-const getTokenFromRequest = (request: NextRequest): string | null => {
-  // Try to get token from cookies first (more secure)
-  const cookieToken = request.cookies.get('token')?.value;
-  if (cookieToken) {
-    return cookieToken;
-  }
-  
-  // Fall back to Authorization header
-  const authHeader = request.headers.get('authorization');
-  if (authHeader?.startsWith('Bearer ')) {
-    return authHeader.substring(7);
-  }
-
-  return null;
-};
 
 // Configure which paths the middleware should run on
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    // Match all API routes
+    '/api/:path*',
+    // Match all authenticated routes
+    '/((?!auth|_next|images|api/auth|api/health|favicon.ico).*)',
   ],
 }; 

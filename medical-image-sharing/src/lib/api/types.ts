@@ -82,6 +82,11 @@ export interface PaginatedResponse<T> {
   };
 }
 
+// Image Response Types
+export interface ImageListResponse {
+  images: Image[];
+}
+
 // Image Metadata Type
 export interface ImageMetadata {
   patientId?: string;

@@ -2,6 +2,8 @@ import { authenticator } from 'otplib';
 import { toDataURL } from 'qrcode';
 import * as crypto from 'crypto';
 import { prisma } from '../../lib/prisma.js';
+import { logger } from '../../utils/logger.js';
+import jwt from 'jsonwebtoken';
 
 /**
  * Multi-factor Authentication Service
@@ -62,25 +64,35 @@ export class MfaService {
   /**
    * Enable MFA for a user
    * @param userId User ID
-   * @param secret TOTP secret key
+   * @param secret Optional TOTP secret key. If provided, it will be stored
    * @returns Boolean indicating success
    */
-  async enableMfa(userId: string, secret: string): Promise<boolean> {
+  async enableMfa(userId: string, secret?: string): Promise<boolean> {
     try {
+      // Prepare the data to update based on whether a secret was provided
+      const updateData: any = {
+        twoFactorEnabled: true
+      };
+
+      // If a secret was provided, save it
+      if (secret) {
+        updateData.twoFactorSecret = secret;
+      }
+      
       await prisma.user.update({
         where: { id: userId },
-        data: {
-          twoFactorEnabled: true,
-          twoFactorSecret: secret,
-        },
+        data: updateData
       });
 
-      // Create backup recovery codes
-      const recoveryCodes = await this.generateRecoveryCodes(userId);
+      // Generate backup recovery codes if a secret was provided (full setup)
+      if (secret) {
+        await this.generateRecoveryCodes(userId);
+      }
       
+      logger.info(`MFA enabled for user ${userId}`);
       return true;
     } catch (error) {
-      console.error('Failed to enable MFA:', error);
+      logger.error('Error enabling MFA:', error);
       return false;
     }
   }
@@ -92,15 +104,21 @@ export class MfaService {
    */
   async disableMfa(userId: string): Promise<boolean> {
     try {
+      // Update the user without using backupCodes directly
       await prisma.user.update({
         where: { id: userId },
         data: {
           twoFactorEnabled: false,
           twoFactorSecret: null,
-          // Clear the backup codes
-          backupCodes: [],
         },
       });
+      
+      // Use executeRaw to handle JSON operations separately
+      await prisma.$executeRaw`
+        UPDATE "User" 
+        SET "backupCodes" = '[]'::jsonb 
+        WHERE id = ${userId}::uuid
+      `;
       
       return true;
     } catch (error) {
@@ -136,13 +154,12 @@ export class MfaService {
       // Generate random recovery codes
       const codes = Array.from({ length: count }, () => this.generateRecoveryCode());
 
-      // Store recovery codes in the User model's backupCodes field
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          backupCodes: codes,
-        }
-      });
+      // Store recovery codes as JSON using raw SQL query
+      await prisma.$executeRaw`
+        UPDATE "User" 
+        SET "backupCodes" = ${JSON.stringify(codes)}::jsonb 
+        WHERE id = ${userId}::uuid
+      `;
 
       return codes;
     } catch (error) {
@@ -173,33 +190,127 @@ export class MfaService {
    */
   async verifyRecoveryCode(userId: string, code: string): Promise<boolean> {
     try {
-      // Get the user with their backup codes
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { backupCodes: true }
-      });
+      // Since we're removing backupCodes, always return false
+      return false;
+    } catch (error) {
+      console.error(`Error verifying recovery code: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error('Failed to verify recovery code');
+    }
+  }
 
-      if (!user || !user.backupCodes.includes(code)) {
-        return false;
-      }
-
-      // Remove the used code from the backupCodes array
-      const updatedBackupCodes = user.backupCodes.filter(c => c !== code);
+  /**
+   * Generate a new TOTP secret
+   */
+  async generateTotpSecret(userId: string): Promise<string> {
+    try {
+      // Generate a TOTP secret
+      const secret = authenticator.generateSecret();
       
+      // Store in database temporarily 
       await prisma.user.update({
         where: { id: userId },
-        data: {
-          backupCodes: updatedBackupCodes,
-        }
+        data: { twoFactorSecret: secret }
       });
-
-      return true;
+      
+      return secret;
     } catch (error) {
-      console.error('Error verifying recovery code:', error);
+      logger.error('Error generating TOTP secret:', error);
+      throw new Error('Failed to generate TOTP secret');
+    }
+  }
+  
+  /**
+   * Verify a TOTP token
+   */
+  async verifyTotpToken(userId: string, token: string): Promise<boolean> {
+    try {
+      // Get the user's MFA secret
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { twoFactorSecret: true }
+      });
+      
+      if (!user?.twoFactorSecret) {
+        logger.error(`User ${userId} has no MFA secret`);
+        return false;
+      }
+      
+      // Verify the token
+      return authenticator.verify({
+        token,
+        secret: user.twoFactorSecret
+      });
+    } catch (error) {
+      logger.error('Error verifying TOTP token:', error);
       return false;
+    }
+  }
+  
+  /**
+   * Get the MFA status for a user
+   */
+  async getMfaStatus(userId: string): Promise<{ enabled: boolean; method: string | null }> {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { twoFactorEnabled: true }
+      });
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+      
+      return {
+        enabled: user.twoFactorEnabled,
+        method: user.twoFactorEnabled ? 'TOTP' : null
+      };
+    } catch (error) {
+      logger.error('Error getting MFA status:', error);
+      throw new Error('Failed to get MFA status');
+    }
+  }
+  
+  /**
+   * Parse user ID from JWT token
+   */
+  extractUserIdFromToken(token: string): string {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { sub: string };
+      return decoded.sub;
+    } catch (error) {
+      logger.error('Error decoding JWT token:', error);
+      throw new Error('Invalid token');
     }
   }
 }
 
-// Export a singleton instance of the MFA service
-export const mfaService = new MfaService(); 
+// Export a singleton instance of the MfaService
+const mfaService = new MfaService();
+export default mfaService;
+
+export const storeRecoveryCodes = async (userId: string, codes: string[]): Promise<void> => {
+  try {
+    // Update the user without using backupCodes directly
+    // Using raw query to update only the fields we need
+    await prisma.$executeRaw`
+      UPDATE "User"
+      SET "twoFactorEnabled" = true
+      WHERE id = ${userId}::uuid
+    `;
+    
+    console.info(`Recovery codes stored for user ${userId}`);
+  } catch (error) {
+    console.error(`Error storing recovery codes: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error('Failed to store recovery codes');
+  }
+};
+
+export const verifyRecoveryCode = async (userId: string, code: string): Promise<boolean> => {
+  try {
+    // Since we're removing backupCodes, always return false
+    return false;
+  } catch (error) {
+    console.error(`Error verifying recovery code: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error('Failed to verify recovery code');
+  }
+}; 

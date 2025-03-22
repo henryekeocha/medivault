@@ -4,7 +4,8 @@ import { protect } from '../middleware/auth.js';
 import { 
   getNotifications, 
   markNotificationAsRead, 
-  deleteNotification 
+  deleteNotification,
+  markAllNotificationsAsRead 
 } from '../controllers/notification.controller.js';
 
 const router = express.Router();
@@ -17,6 +18,9 @@ router.get('/', getNotifications as RequestHandler);
 
 // Mark a notification as read
 router.patch('/:id/read', markNotificationAsRead as RequestHandler);
+
+// Mark all notifications as read
+router.patch('/read-all', markAllNotificationsAsRead as RequestHandler);
 
 // Delete a notification
 router.delete('/:id', deleteNotification as RequestHandler);

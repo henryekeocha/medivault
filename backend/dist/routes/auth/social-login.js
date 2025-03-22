@@ -1,12 +1,9 @@
 import { Router } from 'express';
-import { CognitoService } from '../../services/aws/cognito-service.js';
-import socialIdentityProviderService from '../../services/aws/social-identity-provider.js';
 import { logger } from '../../utils/logger.js';
 /**
  * Router for social login endpoints
  */
 const router = Router();
-const cognitoService = new CognitoService();
 /**
  * Get social login authorization URL
  * POST /auth/social-login/:provider
@@ -20,8 +17,9 @@ router.post('/:provider', async (req, res) => {
                 message: 'Invalid identity provider',
             });
         }
-        // Generate authorization URL for the provider
-        const authUrl = socialIdentityProviderService.getAuthorizationUrl(provider === 'google' ? 'Google' : 'Facebook');
+        // Generate NextAuth sign-in URL for the provider
+        const callbackUrl = encodeURIComponent(`${process.env.NEXTAUTH_URL}/api/auth/callback/${provider}`);
+        const authUrl = `${process.env.NEXTAUTH_URL}/api/auth/signin/${provider}?callbackUrl=${callbackUrl}`;
         // Log the social login attempt
         logger.info(`Social login initiated with provider: ${provider}`);
         return res.status(200).json({
@@ -51,14 +49,8 @@ router.get('/callback', async (req, res) => {
                 message: 'No authorization code received',
             });
         }
-        // Exchange code for tokens
-        // Note: This would typically be handled by Cognito directly with the proper hosted UI setup
-        // This endpoint serves as a fallback or for custom integration
-        // In a real implementation, you would:
-        // 1. Exchange the code for tokens using Cognito's token endpoint
-        // 2. Verify the tokens
-        // 3. Create or retrieve the user in your database
-        // 4. Generate session tokens
+        // NextAuth handles the token exchange automatically
+        // This endpoint can be used for additional processing if needed
         logger.info('Social login callback received', { meta: { code, state } });
         // Redirect to frontend with success
         return res.redirect(`${process.env.FRONTEND_URL}/auth/social-callback?success=true`);
@@ -75,13 +67,24 @@ router.get('/callback', async (req, res) => {
  */
 router.get('/providers', async (req, res) => {
     try {
-        const providers = await socialIdentityProviderService.listIdentityProviders();
+        // We're now using NextAuth's built-in providers
+        const providers = [
+            { name: 'Google', type: 'OAuth' },
+            { name: 'Facebook', type: 'OAuth' }
+        ];
+        // Only include providers that have credentials configured
+        const configuredProviders = providers.filter(p => {
+            if (p.name === 'Google') {
+                return process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET;
+            }
+            else if (p.name === 'Facebook') {
+                return process.env.FACEBOOK_CLIENT_ID && process.env.FACEBOOK_CLIENT_SECRET;
+            }
+            return false;
+        });
         return res.status(200).json({
             success: true,
-            providers: providers.map(p => ({
-                name: p.ProviderName,
-                type: p.ProviderType,
-            })),
+            providers: configuredProviders,
         });
     }
     catch (error) {

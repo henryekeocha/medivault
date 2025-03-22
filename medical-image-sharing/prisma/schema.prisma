@@ -205,6 +205,13 @@ model User {
   accounts         Account[]
   sessions         Session[]
 
+  // Auth token relations
+  verificationToken VerificationToken?
+  passwordReset     PasswordReset?
+
+  // File uploads
+  fileUploads       FileUpload[]
+
   @@index([email])
   @@index([username])
   @@index([role])
@@ -660,4 +667,63 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// Add these new models at the end of the file
+
+model VerificationToken {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+}
+
+model PasswordReset {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String   @unique @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+}
+
+// Add email provider model
+model EmailProvider {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  provider     String   @default("smtp") // smtp, sendgrid, mailgun, etc.
+  host         String?
+  port         Int?
+  username     String?
+  password     String?
+  apiKey       String?
+  from         String
+  replyTo      String?
+  isDefault    Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Add FileUpload model
+model FileUpload {
+  id           String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  key          String   @unique
+  filename     String
+  contentType  String
+  size         Int
+  url          String
+  accessLevel  String   @default("public")
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([accessLevel])
 } 

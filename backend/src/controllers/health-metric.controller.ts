@@ -10,21 +10,60 @@ const prisma = new PrismaClient();
 
 export const getHealthMetrics = async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const { patientId } = req.params;
+    const { startDate, endDate } = req.query;
     const userId = req.user.id;
+
+    // Verify access rights
+    if (patientId !== userId && req.user.role !== 'PROVIDER') {
+      throw new AppError('Unauthorized access to patient health metrics', 403);
+    }
+
+    // Build the where clause
+    const where: any = {
+      patientId,
+    };
+
+    // Add date range filter if provided
+    if (startDate || endDate) {
+      where.timestamp = {};
+      if (startDate) {
+        where.timestamp.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        where.timestamp.lte = new Date(endDate as string);
+      }
+    }
+
     const metrics = await prisma.healthMetric.findMany({
-      where: {
-        OR: [
-          { patientId: userId },
-          { providerId: userId },
-        ],
-      },
+      where,
       orderBy: {
         timestamp: 'desc',
       },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        provider: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
     });
 
-    res.json({ data: metrics });
+    res.json({ 
+      status: 'success',
+      data: metrics 
+    });
   } catch (error) {
+    if (error instanceof AppError) throw error;
     throw new AppError('Error fetching health metrics', 500);
   }
 };

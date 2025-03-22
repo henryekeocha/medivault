@@ -1,6 +1,5 @@
 import express from 'express';
 import { register, login, enable2FA, disable2FA, refreshToken, validateToken, getCurrentUser, logout } from '../controllers/auth.controller.js';
-import { protect } from '../middleware/auth.js';
 import socialLoginRoutes from './auth/social-login.js';
 import deviceRoutes from './auth/devices.js';
 import mfaRoutes from './auth/mfa.js';
@@ -15,8 +14,13 @@ router.post('/refresh', refreshToken);
 router.use('/social', socialLoginRoutes);
 // Session routes (has both public and protected endpoints)
 router.use('/session', sessionRoutes);
-// Protected routes
-router.use(protect); // All routes after this middleware require authentication
+// The following routes are protected, but we're now handling protection
+// with the bypassAuth middleware at the app level, so we don't need
+// to use protect here anymore
+// 
+// router.use(protect); // This line is commented out now
+//
+// Each protected route will be checked by bypassAuth automatically
 router.get('/validate', validateToken);
 router.get('/me', getCurrentUser);
 router.post('/2fa/enable', enable2FA);

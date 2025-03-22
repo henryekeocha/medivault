@@ -1,4 +1,4 @@
-import { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 
 interface ErrorHandlerOptions {
   logToConsole?: boolean;

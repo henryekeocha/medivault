@@ -215,52 +215,64 @@ export const getAppointment = async (
   }
 };
 
-export const listAppointments = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-) => {
+export const listAppointments = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const { startDate, endDate, status } = req.query;
-
-    // Build where clause
-    const where: any = {
-      OR: [
-        { patientId: req.user.id },
-        { doctorId: req.user.id },
-      ],
+    const { doctorId, status, startDate, endDate, page = 1, limit = 10 } = req.query;
+    
+    const where = {
+      ...(doctorId ? { doctorId: doctorId as string } : {}),
+      ...(status ? { 
+        status: {
+          in: (status as string).split(',').map(s => s.trim() as AppointmentStatus)
+        }
+      } : {}),
+      ...(startDate ? {
+        startTime: {
+          gte: new Date(startDate as string),
+          ...(endDate ? { lte: new Date(endDate as string) } : {})
+        }
+      } : {})
     };
 
-    if (startDate) {
-      where.startTime = {
-        gte: new Date(startDate as string),
-      };
-    }
-
-    if (endDate) {
-      where.endTime = {
-        lte: new Date(endDate as string),
-      };
-    }
-
-    if (status) {
-      where.status = status;
-    }
-
-    const appointments = await prisma.appointment.findMany({
-      where,
-      include: {
-        patient: true,
-        doctor: true,
-      },
-      orderBy: {
-        startTime: 'asc',
-      },
-    });
+    const [appointments, total] = await Promise.all([
+      prisma.appointment.findMany({
+        where,
+        include: {
+          patient: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          },
+          doctor: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              specialty: true
+            }
+          }
+        },
+        skip: (Number(page) - 1) * Number(limit),
+        take: Number(limit),
+        orderBy: {
+          startTime: 'desc'
+        }
+      }),
+      prisma.appointment.count({ where })
+    ]);
 
     res.status(200).json({
       status: 'success',
-      data: appointments,
+      data: {
+        items: appointments,
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          total
+        }
+      }
     });
   } catch (error) {
     next(error);

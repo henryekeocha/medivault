@@ -1,17 +1,13 @@
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
-
-interface ApiError {
-  message: string;
-  code?: string;
-  details?: any;
-}
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { ApiError, ApiResponse } from './types';
+import { getSession } from 'next-auth/react';
 
 class Api {
   private client: AxiosInstance;
 
   constructor() {
     this.client = axios.create({
-      baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001',
+      baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3001',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -23,10 +19,11 @@ class Api {
   private setupInterceptors() {
     // Request interceptor
     this.client.interceptors.request.use(
-      (config) => {
-        const token = localStorage.getItem('token');
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
+      async (config) => {
+        // Get session from NextAuth
+        const session = await getSession();
+        if (session?.accessToken) {
+          config.headers.Authorization = `Bearer ${session.accessToken}`;
         }
         return config;
       },
@@ -40,23 +37,24 @@ class Api {
       (response) => response,
       (error: AxiosError<ApiError>) => {
         if (error.response?.status === 401) {
-          // Handle unauthorized access
-          localStorage.removeItem('token');
-          window.location.href = '/login';
+          // Handle unauthorized access - NextAuth will handle redirecting
+          window.location.href = '/auth/login';
         }
         return Promise.reject(this.handleError(error));
       }
     );
   }
 
-  private handleError(error: AxiosError<ApiError>): Error {
-    if (error.response?.data) {
-      return new Error(error.response.data.message || 'An error occurred');
+  private handleError(error: AxiosError<ApiError>): ApiError {
+    if (error.response && error.response.data) {
+      return error.response.data;
     }
-    if (error.request) {
-      return new Error('No response received from server');
-    }
-    return new Error('Error setting up request');
+    
+    return {
+      code: 'UNKNOWN_ERROR',
+      message: error.message || 'An unknown error occurred',
+      details: error.stack,
+    };
   }
 
   async get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {

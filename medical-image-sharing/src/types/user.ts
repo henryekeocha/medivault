@@ -5,31 +5,12 @@ export interface User {
   email: string;
   name?: string;
   role?: Role;
+  image?: string;
   avatar?: string;
   created_at?: Date;
   updated_at?: Date;
   emailVerified?: boolean;
   phoneVerified?: boolean;
-}
-
-// Cognito user attributes interface
-export interface CognitoUserAttributes {
-  sub?: string;
-  email?: string;
-  email_verified?: string;
-  name?: string;
-  given_name?: string;
-  family_name?: string;
-  phone_number?: string;
-  phone_number_verified?: string;
-  address?: string;
-  birthdate?: string;
-  gender?: string;
-  custom_role?: string;
-  custom_preferences?: string;
-  picture?: string;
-  updated_at?: string;
-  [key: string]: string | undefined;
 }
 
 export interface UserUpdatePayload {
@@ -41,8 +22,8 @@ export interface UserUpdatePayload {
   gender?: string;
   givenName?: string;
   familyName?: string;
-  custom_role?: string;
-  custom_preferences?: string;
+  role?: string;
+  preferences?: string;
   picture?: string;
 }
 

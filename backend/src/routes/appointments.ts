@@ -39,6 +39,11 @@ router.get(
   appointmentController.getAppointment as RequestHandler
 );
 
+router.delete(
+  '/:id',
+  appointmentController.cancelAppointment as RequestHandler
+);
+
 // This route doesn't exist in the controller - it needs to be implemented or removed
 // For now, we'll use a placeholder to make TypeScript happy
 router.get(

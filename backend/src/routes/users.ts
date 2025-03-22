@@ -15,8 +15,8 @@ router.route('/profile')
   .get(userController.getProfile as RequestHandler)
   .put(userController.updateProfile as RequestHandler);
 
-// Restrict all user management routes to Admin
-router.use(restrictTo(Role.ADMIN) as RequestHandler);
+// Restrict user management routes to Provider
+router.use(restrictTo(Role.PROVIDER) as RequestHandler);
 
 // User management routes
 router.route('/')

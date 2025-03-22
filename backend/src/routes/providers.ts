@@ -61,4 +61,55 @@ router.route('/analytics')
     providerController.getProviderAnalytics as RequestHandler
   );
 
+// Provider availability routes
+router.route('/availability/hours')
+  .get(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.getProviderWorkingHours as RequestHandler
+  )
+  .post(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.saveProviderWorkingHours as RequestHandler
+  );
+
+router.route('/availability/blocks')
+  .get(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.getProviderAvailabilityBlocks as RequestHandler
+  )
+  .post(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.addProviderAvailabilityBlock as RequestHandler
+  )
+  .put(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.saveProviderAvailabilityBlocks as RequestHandler
+  );
+
+router.route('/availability/blocks/:blockId')
+  .delete(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.removeProviderAvailabilityBlock as RequestHandler
+  );
+
+router.route('/availability/blocked')
+  .get(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.getProviderBlockedTimes as RequestHandler
+  )
+  .post(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.addProviderBlockedTime as RequestHandler
+  )
+  .put(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.saveProviderBlockedTimes as RequestHandler
+  );
+
+router.route('/availability/blocked/:blockedTimeId')
+  .delete(
+    restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler,
+    providerController.removeProviderBlockedTime as RequestHandler
+  );
+
 export default router; 

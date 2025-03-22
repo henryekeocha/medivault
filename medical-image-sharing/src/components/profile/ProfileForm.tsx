@@ -34,16 +34,14 @@ interface ProfileData {
 }
 
 export function ProfileForm({ additionalFields }: ProfileFormProps) {
-  const { state, dispatch } = useAuth();
+  const auth = useAuth();
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [showTwoFactorSetup, setShowTwoFactorSetup] = useState(false);
-  
   const [profileData, setProfileData] = useState<ProfileData>({
-    name: state.user?.name || '',
-    phoneNumber: (state.user as any)?.phoneNumber || '', // Type assertion for phoneNumber
+    name: auth.user?.name || '',
+    phoneNumber: (auth.user as any)?.phoneNumber || '', // Type assertion for phoneNumber
   });
-  
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -58,13 +56,18 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
 
   // Update profileData when user data changes
   useEffect(() => {
-    if (state.user) {
+    if (auth.user) {
       setProfileData({
-        name: state.user.name || '',
-        phoneNumber: (state.user as any)?.phoneNumber || '', // Type assertion for phoneNumber
+        name: auth.user.name || '',
+        phoneNumber: (auth.user as any)?.phoneNumber || '', // Type assertion for phoneNumber
       });
     }
-  }, [state.user]);
+  }, [auth.user]);
+
+  // Add loading state check after all hooks are declared
+  if (!auth || !auth.user) {
+    return <LoadingState />;
+  }
 
   const handleProfileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -87,13 +90,10 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
           setSuccess('Profile updated successfully');
           
           // Update the user in the auth context
-          if (state.user) {
-            dispatch({
-              type: 'SET_USER',
-              payload: {
-                ...state.user,
-                ...profileData
-              }
+          if (auth.user) {
+            auth.updateUser({
+              ...auth.user,
+              ...profileData
             });
           }
         } else {
@@ -144,7 +144,7 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
       
       try {
         // First enable 2FA if not already enabled
-        if (!state.user?.twoFactorEnabled) {
+        if (!auth.user?.twoFactorEnabled) {
           await apiClient.toggleTwoFactor(true);
         }
         
@@ -227,7 +227,7 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
                 <TextField
                   fullWidth
                   label="Email"
-                  value={state.user?.email}
+                  value={auth.user?.email}
                   disabled
                 />
               </Grid>
@@ -246,7 +246,7 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
                 <TextField
                   fullWidth
                   label="Role"
-                  value={state.user?.role}
+                  value={auth.user?.role}
                   disabled
                 />
               </Grid>
@@ -366,7 +366,7 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
           <FormControlLabel
             control={
               <Switch
-                checked={state.user?.twoFactorEnabled || false}
+                checked={auth.user?.twoFactorEnabled || false}
                 onChange={handleTwoFactorToggle}
                 disabled={loading}
               />
@@ -374,10 +374,16 @@ export function ProfileForm({ additionalFields }: ProfileFormProps) {
             label="Enable Two-Factor Authentication"
           />
 
-          <Dialog open={showTwoFactorSetup} onClose={() => setShowTwoFactorSetup(false)}>
+          <Dialog 
+            open={showTwoFactorSetup} 
+            onClose={() => setShowTwoFactorSetup(false)}
+            aria-labelledby="two-factor-dialog-title"
+            aria-describedby="two-factor-dialog-description"
+            keepMounted={false}
+          >
             <DialogContent>
               <TwoFactorForm
-                email={state.user?.email || ''}
+                email={auth.user?.email || ''}
                 onVerify={handleTwoFactorSetup}
                 onResend={handleTwoFactorResend}
               />

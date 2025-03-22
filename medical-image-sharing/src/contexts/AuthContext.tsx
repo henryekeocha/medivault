@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useReducer } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useReducer, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { apiClient } from '@/lib/api/client';
 import { UserResponse, LoginRequest, RegisterRequest, ApiResponse, TokenValidationResponse } from '@/lib/api/types';
@@ -15,6 +15,13 @@ import {
   trackLogoutFlow,
   verifyAuthState
 } from '@/lib/utils/auth-debug';
+import { User } from '@/lib/api/types';
+import { useSession, signOut, signIn, getSession } from 'next-auth/react';
+
+// Define a logDebug function using the existing authDebug
+const logDebug = (category: string, message: string, data?: any) => {
+  authDebug(`[${category}] ${message}`, data);
+};
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -44,6 +51,8 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   isAuthenticated: boolean;
+  serverAvailable: boolean;
+  retryCount: number;
 }
 
 // Define action types
@@ -78,6 +87,8 @@ interface AuthContextType extends AuthState {
   isTokenExpired: (token: string) => boolean;
   getTimeUntilExpiration: (token: string) => number;
   resetActivityTimer: () => void;
+  updateUser: (user: UserResponse) => void;
+  setAuth: (auth: { isAuthenticated: boolean; user: UserResponse | null }) => void;
 }
 
 // Create the context with a default value
@@ -86,6 +97,8 @@ const AuthContext = createContext<AuthContextType>({
   loading: false,
   error: null,
   isAuthenticated: false,
+  serverAvailable: true,
+  retryCount: 0,
   login: async () => false,
   logout: () => {},
   register: async () => false,
@@ -93,7 +106,9 @@ const AuthContext = createContext<AuthContextType>({
   refreshToken: async () => false,
   isTokenExpired: () => true,
   getTimeUntilExpiration: () => 0,
-  resetActivityTimer: () => {}
+  resetActivityTimer: () => {},
+  updateUser: () => {},
+  setAuth: () => {}
 });
 
 function useDelayedRouter() {
@@ -122,15 +137,30 @@ const AUTH_CONFIG = {
   LOGIN_ATTEMPTS_MAX: 5,
   SESSION_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes
   TOKEN_EXPIRY_BUFFER: 5 * 60, // 5 minutes buffer before expiration (in seconds)
+  TOKEN_REFRESH_THRESHOLD_SEC: 5 * 60, // 5 minutes threshold for token refresh
 };
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+// Add these variables near the top of the file, just after the existing AUTH_CONFIG
+const SESSION_CHECK = {
+  lastCheckTime: 0,
+  consecutiveFailures: 0,
+  maxConsecutiveFailures: 3,
+  backoffTime: 5000, // 5 seconds initial backoff
+  maxBackoffTime: 60000, // Max 1 minute between retries
+};
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  // Add NextAuth session handling at the top of the component
+  const { data: session, status: sessionStatus, update } = useSession();
+  
   // Initialize with useReducer instead of separate useState calls
   const [state, dispatch] = useReducer(authReducer, {
     user: null,
     loading: true,
     error: null,
     isAuthenticated: false,
+    serverAvailable: true,
+    retryCount: 0,
   });
 
   // Keep these for backward compatibility
@@ -148,51 +178,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const sessionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const appReady = useRef(false);
+  // Add a ref to track state sync to prevent infinite loops
+  const syncingState = useRef(false);
 
   // Forward declaration of functions to avoid circular dependencies
   const logoutRef = useRef<() => void>(() => {});
   
-  // Sync state.user with user
+  // Sync state.user with user - with safeguard against loops
   useEffect(() => {
-    if (state.user !== user) {
+    if (!syncingState.current && state.user !== user) {
+      syncingState.current = true;
       setUser(state.user);
+      // Release the lock asynchronously
+      setTimeout(() => {
+        syncingState.current = false;
+      }, 0);
     }
   }, [state.user]);
 
-  // Sync user with state.user
+  // Sync user with state.user - with safeguard against loops
   useEffect(() => {
-    if (user !== state.user) {
+    if (!syncingState.current && user !== state.user) {
+      syncingState.current = true;
       dispatch({ type: 'SET_USER', payload: user });
+      // Release the lock asynchronously
+      setTimeout(() => {
+        syncingState.current = false;
+      }, 0);
     }
   }, [user]);
 
-  // Sync state.loading with loading
+  // Sync state.loading with loading - with safeguard against loops
   useEffect(() => {
-    if (state.loading !== loading) {
-      dispatch({ type: 'SET_LOADING', payload: loading });
-    }
-  }, [loading]);
-
-  // Sync loading with state.loading
-  useEffect(() => {
-    if (loading !== state.loading) {
+    if (!syncingState.current && state.loading !== loading) {
+      syncingState.current = true;
       setLoading(state.loading);
+      // Release the lock asynchronously
+      setTimeout(() => {
+        syncingState.current = false;
+      }, 0);
     }
   }, [state.loading]);
 
-  // Sync state.error with error
+  // Sync loading with state.loading - with safeguard against loops
   useEffect(() => {
-    if (state.error !== error) {
-      dispatch({ type: 'SET_ERROR', payload: error });
+    if (!syncingState.current && loading !== state.loading) {
+      syncingState.current = true;
+      dispatch({ type: 'SET_LOADING', payload: loading });
+      // Release the lock asynchronously
+      setTimeout(() => {
+        syncingState.current = false;
+      }, 0);
     }
-  }, [error]);
+  }, [loading]);
 
-  // Sync error with state.error
+  // Sync state.error with error - with safeguard against loops
   useEffect(() => {
-    if (error !== state.error) {
+    if (!syncingState.current && state.error !== error) {
+      syncingState.current = true;
       setError(state.error);
+      // Release the lock asynchronously
+      setTimeout(() => {
+        syncingState.current = false;
+      }, 0);
     }
   }, [state.error]);
+
+  // Sync error with state.error - with safeguard against loops
+  useEffect(() => {
+    if (!syncingState.current && error !== state.error) {
+      syncingState.current = true;
+      dispatch({ type: 'SET_ERROR', payload: error });
+      // Release the lock asynchronously
+      setTimeout(() => {
+        syncingState.current = false;
+      }, 0);
+    }
+  }, [error]);
 
   // Track user activity to prevent timeout during active usage
   useEffect(() => {
@@ -273,19 +335,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
   
+  // Function to refresh token
+  const refreshToken = useCallback(async (): Promise<boolean> => {
+    try {
+      // Get current session
+      if (!session?.refreshToken) {
+        authDebug('No refresh token found');
+        return false;
+      }
+
+      // Call the refresh token endpoint
+      const response = await apiClient.refreshToken();
+      if (response?.data?.token) {
+        // Force a session update by calling getSession
+        await getSession();
+        
+        authDebug('Token refreshed successfully');
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('[Auth] Error refreshing token:', error);
+      return false;
+    }
+  }, [apiClient, session]);
+
+  // Function to check if token is expiring soon
   const isTokenExpiringSoon = useCallback((token: string): boolean => {
-    if (!token) return true;
-    
     try {
       const decoded = jwt_decode<{ exp: number }>(token);
-      if (!decoded.exp) return true;
-      
       const now = Math.floor(Date.now() / 1000);
-      // Check if token will expire in the next 5 minutes
-      return decoded.exp <= (now + AUTH_CONFIG.TOKEN_EXPIRY_BUFFER);
+      const timeUntilExpiration = decoded.exp - now;
+      return timeUntilExpiration <= AUTH_CONFIG.TOKEN_REFRESH_THRESHOLD_SEC;
     } catch (error) {
       console.error('[Auth] Error checking token expiration:', error);
-      return true;
+      return false;
     }
   }, []);
 
@@ -307,115 +392,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const logout = () => {
-    authDebug('Logging out user');
-    trackLogoutFlow('Logout started');
+  // Implement logout functionality (forward declaration resolved)
+  const logout = useCallback(() => {
+    logDebug('Auth', 'Logging out user');
     
-    // Verify pre-logout state
-    trackLogoutFlow('Pre-logout state');
-    verifyAuthState();
-    
-    // Clear token refresh interval
-    if (tokenRefreshInterval.current) {
-      clearInterval(tokenRefreshInterval.current);
-      tokenRefreshInterval.current = null;
-      trackLogoutFlow('Token refresh interval cleared');
+    try {
+      // Clear auth state
+      dispatch({ type: 'LOGOUT' });
+      
+      // Log out from NextAuth
+      signOut({ redirect: false }).catch(error => {
+        console.error('Error signing out from NextAuth:', error);
+      });
+      
+      // Clear intervals
+      if (tokenRefreshInterval.current) {
+        clearInterval(tokenRefreshInterval.current);
+        tokenRefreshInterval.current = null;
+      }
+      
+      if (sessionTimeoutRef.current) {
+        clearInterval(sessionTimeoutRef.current);
+        sessionTimeoutRef.current = null;
+      }
+      
+      // Redirect to login page
+      if (isReady) {
+        navigate('/auth/login');
+      }
+      
+      trackLogoutFlow('success');
+    } catch (error) {
+      console.error('Logout error:', error);
+      trackLogoutFlow('error', { error });
     }
-    
-    // Clear lockout timer if it exists
-    if (lockoutTimer) {
-      clearTimeout(lockoutTimer);
-      setLockoutTimer(null);
-      trackLogoutFlow('Lockout timer cleared');
-    }
-    
-    // Clear session timeout check
-    if (sessionTimeoutRef.current) {
-      clearInterval(sessionTimeoutRef.current);
-      sessionTimeoutRef.current = null;
-      trackLogoutFlow('Session timeout check cleared');
-    }
-    
-    // Clear local storage
-    trackLogoutFlow('Clearing local storage');
-    localStorage.removeItem('token');
-    localStorage.removeItem('refreshToken');
-    
-    // Update context state
-    trackLogoutFlow('Updating context state');
-    dispatch({ type: 'LOGOUT' });
-    
-    // Navigate to login page
-    trackLogoutFlow('Navigating to login page');
-    navigate('/login');
-    
-    // Verify post-logout state
-    trackLogoutFlow('Post-logout state');
-    verifyAuthState();
-  };
+  }, [isReady, navigate]);
 
   // Assign the real implementation to the ref
   useEffect(() => {
     logoutRef.current = logout;
   }, []); // Intentionally empty to avoid circular dependency
 
-  // Function to refresh the authentication token
-  const refreshToken = useCallback(async (): Promise<boolean> => {
-    try {
-      const storedRefreshToken = localStorage.getItem('refreshToken');
-      
-      if (!storedRefreshToken) {
-        authDebug('No refresh token found');
-        return false;
-      }
-      
-      authDebug('Starting token refresh');
-      logToken(storedRefreshToken, 'Using refresh token');
-      
-      const response = await apiClient.refreshToken();
-      
-      if (!response?.data?.token) {
-        authDebug('Token refresh failed - no token in response');
-        return false;
-      }
-      
-      // Log token information for debugging
-      authDebug('Token refresh successful');
-      logToken(response.data.token, 'New token');
-      logToken(response.data.refreshToken, 'New refresh token');
-      
-      // Update localStorage with new tokens
-      localStorage.setItem('token', response.data.token);
-      localStorage.setItem('refreshToken', response.data.refreshToken);
-      
-      // Update user data if it was returned
-      if (response.data.user) {
-        dispatch({ type: 'SET_USER', payload: response.data.user });
-        authDebug('User data updated from refresh response');
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('[Auth] Token refresh error:', error);
-      return false;
-    }
-  }, [apiClient, dispatch]);
-
-  // Setup token refresh interval
+  // Set up token refresh interval
   const setupTokenRefresh = useCallback(() => {
     // Clear existing interval if any
     if (tokenRefreshInterval.current) {
       clearInterval(tokenRefreshInterval.current);
       tokenRefreshInterval.current = null;
     }
-    
-    // Set up periodic token refresh
+
     tokenRefreshInterval.current = setInterval(async () => {
-      authDebug('Token refresh interval triggered');
+      // Get current session
+      const session = await getSession();
+      const token = session?.accessToken;
       
-      const token = localStorage.getItem('token');
       if (!token) {
-        authDebug('No token found during refresh interval');
+        authDebug('No token found, clearing refresh interval');
+        if (tokenRefreshInterval.current) {
+          clearInterval(tokenRefreshInterval.current);
+          tokenRefreshInterval.current = null;
+        }
         return;
       }
       
@@ -435,13 +471,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     authDebug('Token refresh interval set up');
   }, [isTokenExpiringSoon, refreshToken]);
 
-  // Validate token with backend API
+  // Validate token with backend API or NextAuth session
   const validateToken = useCallback(async (): Promise<boolean> => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) return false;
+      // First check if we have a valid NextAuth session
+      if (sessionStatus === 'authenticated' && session?.user) {
+        authDebug('User is authenticated via NextAuth, skipping token validation');
+        return true;
+      }
+      
+      // Fall back to token validation if no NextAuth session
+      const nextAuthSession = await getSession();
+      if (!nextAuthSession?.accessToken) return false;
       
       authDebug('Validating token with backend API');
+      
+      // First try to decode the token locally to avoid unnecessary API calls
+      try {
+        const decoded = jwt_decode<{ exp: number }>(nextAuthSession.accessToken);
+        const now = Math.floor(Date.now() / 1000);
+        if (decoded.exp && decoded.exp <= now) {
+          authDebug('Token is expired according to local check');
+          return false;
+        }
+      } catch (decodeError) {
+        console.error('[Auth] Error decoding token:', decodeError);
+        // Continue to backend validation even if local decode fails
+      }
       
       const response = await apiClient.validateToken();
       
@@ -477,87 +533,98 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('[Auth] Token validation error:', error);
       return false;
     }
-  }, [apiClient, dispatch, setupTokenRefresh]);
+  }, [sessionStatus, session, dispatch, apiClient, setupTokenRefresh]);
 
   const checkAuth = useCallback(async (): Promise<boolean> => {
     // Skip if we're already checking auth or if the app is not ready
-    if (checkingAuth.current || !isReady) return false;
+    if (checkingAuth.current || !appReady.current) {
+      return false;
+    }
     
-    // Set checking flag to prevent multiple simultaneous checks
     checkingAuth.current = true;
-    setLoading(true);
+    
+    // Check if we're over the backoff time before making another request
+    const currentTime = Date.now();
+    if (
+      currentTime - SESSION_CHECK.lastCheckTime < 
+      Math.min(SESSION_CHECK.backoffTime * SESSION_CHECK.consecutiveFailures, SESSION_CHECK.maxBackoffTime)
+    ) {
+      checkingAuth.current = false;
+      return false;
+    }
+    
+    SESSION_CHECK.lastCheckTime = currentTime;
     
     try {
       authDebug('Checking authentication status...');
-      const token = localStorage.getItem('token');
       
-      if (!token) {
-        authDebug('No token found in localStorage');
-        dispatch({ type: 'SET_USER', payload: null });
+      // Check NextAuth session first
+      const nextAuthSession = await getSession();
+      if (nextAuthSession?.user) {
+        authDebug('User authenticated via NextAuth session');
         
-        if (!PUBLIC_ROUTES.includes(pathname || '')) {
-          navigate('/login');
-        }
-        return false;
+        // Create a user object from NextAuth session
+        const sessionUser: UserResponse = {
+          id: nextAuthSession.user.id,
+          email: nextAuthSession.user.email,
+          name: nextAuthSession.user.name || 'User',
+          role: nextAuthSession.user.role,
+          twoFactorEnabled: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        
+        dispatch({ type: 'SET_USER', payload: sessionUser });
+        
+        // Reset failure count on success
+        SESSION_CHECK.consecutiveFailures = 0;
+        checkingAuth.current = false;
+        return true;
       }
       
-      // Check if token is expired
-      if (isTokenExpired(token)) {
-        authDebug('Token is expired, attempting refresh');
+      // If no NextAuth session, try API validation
+      const validationResponse = await apiClient.validateToken();
+      if (validationResponse?.data?.isValid && validationResponse?.data?.user) {
+        dispatch({ type: 'SET_USER', payload: validationResponse.data.user });
         
-        // Try to refresh the token
-        const refreshed = await refreshToken();
-        if (!refreshed) {
-          authDebug('Token refresh failed, redirecting to login');
-          // Clear tokens and user data
-          localStorage.removeItem('token');
-          localStorage.removeItem('refreshToken');
-          dispatch({ type: 'LOGOUT' });
-          
-          if (!PUBLIC_ROUTES.includes(pathname || '')) {
-            navigate('/login');
-          }
-          return false;
-        }
-        
-        authDebug('Token refreshed successfully');
-        // Re-fetch the new token after refresh
-        const newToken = localStorage.getItem('token');
-        if (!newToken) {
-          authDebug('No token found after refresh (unexpected error)');
-          return false;
-        }
-      }
-      
-      // Validate token with backend
-      authDebug('Validating token with backend');
-      const validated = await validateToken();
-      
-      if (validated) {
-        authDebug('Token validation successful');
+        // Reset failure count on success
+        SESSION_CHECK.consecutiveFailures = 0;
+        checkingAuth.current = false;
         return true;
       } else {
-        authDebug('Token validation failed, redirecting to login');
-        // Clear tokens and user data
-        localStorage.removeItem('token');
-        localStorage.removeItem('refreshToken');
-        dispatch({ type: 'LOGOUT' });
+        authDebug('Token validation failed');
+        dispatch({ type: 'SET_USER', payload: null });
         
-        if (!PUBLIC_ROUTES.includes(pathname || '')) {
-          navigate('/login');
+        // Only navigate if we're not already on a public route and this isn't an initial load
+        if (initRef.current && !PUBLIC_ROUTES.includes(pathname || '') && pathname !== '/auth/login') {
+          authDebug('Redirecting to login page due to failed validation');
+          navigate('/auth/login');
         }
+        
+        checkingAuth.current = false;
         return false;
       }
     } catch (error) {
-      console.error('[Auth] Auth check error:', error);
-      dispatch({ type: 'SET_ERROR', payload: 'Session verification failed. Please log in again.' });
-      dispatch({ type: 'LOGOUT' });
-      return false;
-    } finally {
-      setLoading(false);
+      console.error('[Auth] Error checking authentication:', error);
+      
+      // Increment failure count to implement backoff
+      SESSION_CHECK.consecutiveFailures++;
+      
+      // If we've tried too many times, log the user out
+      if (SESSION_CHECK.consecutiveFailures >= SESSION_CHECK.maxConsecutiveFailures) {
+        dispatch({ type: 'SET_USER', payload: null });
+        
+        // Only navigate if we're not already on a public route
+        if (!PUBLIC_ROUTES.includes(pathname || '')) {
+          authDebug('Too many consecutive auth failures, redirecting to login');
+          navigate('/auth/login');
+        }
+      }
+      
       checkingAuth.current = false;
+      return false;
     }
-  }, [isReady, navigate, pathname, validateToken, refreshToken, isTokenExpired, dispatch]);
+  }, [apiClient, pathname, navigate]);
 
   // Clear interval on unmount
   useEffect(() => {
@@ -573,123 +640,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Initial authentication check
+  // Modify the initial authentication check
   useEffect(() => {
     if (!initRef.current && isReady) {
       initRef.current = true;
-      checkAuth();
+      
+      // Check if we're on a protected route that requires authentication
+      const isProtectedRoute = pathname && !PUBLIC_ROUTES.includes(pathname) && pathname !== '/auth/login';
+      
+      // Only perform auth check if we have a session or we're on a protected route
+      if (sessionStatus === 'authenticated' || isProtectedRoute) {
+        // Slight delay before initial auth check to avoid immediate redirects
+        setTimeout(() => {
+          checkAuth();
+        }, 100);
+      } else {
+        // Not authenticated and on a public route, just mark as not loading
+        setLoading(false);
+      }
     }
-  }, [checkAuth, isReady]);
-
-  // Check authentication on route change to protected routes
+  }, [checkAuth, isReady, pathname, sessionStatus]);
+  
+  // Only check authentication on route change to protected routes
   useEffect(() => {
-    if (isReady && pathname && !PUBLIC_ROUTES.includes(pathname)) {
-      checkAuth();
+    if (isReady && initRef.current) {
+      const isProtectedRoute = pathname && !PUBLIC_ROUTES.includes(pathname) && pathname !== '/auth/login';
+      
+      // Only check auth when navigating to protected routes or when we have a session
+      if (isProtectedRoute || sessionStatus === 'authenticated') {
+        checkAuth();
+      }
     }
-  }, [pathname, isReady, checkAuth]);
+  }, [pathname, isReady, checkAuth, sessionStatus]);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     dispatch({ type: 'SET_LOADING', payload: true });
     dispatch({ type: 'SET_ERROR', payload: null });
     
-    // Check if login is locked due to too many failed attempts
-    if (loginLocked) {
-      authDebug('Login locked due to too many failed attempts');
-      dispatch({ type: 'SET_ERROR', payload: 'Too many failed login attempts. Please try again later.' });
-      dispatch({ type: 'SET_LOADING', payload: false });
-      return false;
-    }
-    
     try {
-      trackLoginFlow('Login API call starting', { email });
-      authDebug(`Attempting login for user: ${email}`);
+      // Track login flow start
+      trackLoginFlow('start', { email });
       
-      const response = await apiClient.login({
+      // Attempt to sign in with NextAuth
+      const result = await signIn('credentials', {
+        redirect: false,
         email,
         password
       });
-      
-      if (!response.data || !response.data.token) {
-        trackLoginFlow('Login API response missing token');
-        throw new Error('Login failed: Invalid response from server');
+
+      if (result?.error) {
+        dispatch({ type: 'SET_ERROR', payload: result.error });
+        trackLoginFlow('error', { error: result.error });
+        return false;
       }
+
+      // Get the session after successful sign in
+      const session = await getSession();
       
-      // Reset login attempts on successful login
-      setLoginAttempts(0);
-      
-      // Log token info
-      logToken(response.data.token, 'New access token');
-      logToken(response.data.refreshToken, 'New refresh token');
-      
-      // Token storage is handled by ApiClient.handleAuthResponse
-      // Just verify that the tokens are in localStorage
-      const storedToken = localStorage.getItem('token');
-      if (!storedToken) {
-        trackLoginFlow('Token not found in localStorage after login, storing manually');
-        localStorage.setItem('token', response.data.token);
-        if (response.data.refreshToken) {
-          localStorage.setItem('refreshToken', response.data.refreshToken);
-        }
+      if (!session?.user) {
+        dispatch({ type: 'SET_ERROR', payload: 'Failed to get user session' });
+        return false;
       }
+
+      // Update auth state with user data
+      dispatch({ type: 'SET_USER', payload: session.user as UserResponse });
       
-      const userData = response.data.user;
-      dispatch({ type: 'SET_USER', payload: userData });
-      trackLoginFlow('User data set in context', { userId: userData.id, role: userData.role });
+      // Get user's role and navigate to appropriate dashboard
+      const userRole = session.user.role as Role;
+      const defaultRoute = ROLE_DEFAULT_ROUTES[userRole] || '/dashboard';
       
-      // Set up token refresh
-      setupTokenRefresh();
-      trackLoginFlow('Token refresh setup complete');
+      // Use the router to navigate
+      navigate(defaultRoute);
       
-      // Reset last activity timestamp
-      lastActivityRef.current = Date.now();
-      
-      // Navigate to the appropriate dashboard based on user role
-      if (userData && userData.role) {
-        const defaultPath = getDefaultRouteForUser(userData.role);
-        trackLoginFlow('Redirecting to role-specific dashboard', { role: userData.role, path: defaultPath });
-        navigate(defaultPath);
-      } else {
-        trackLoginFlow('Redirecting to default dashboard');
-        navigate('/dashboard');
-      }
-      
-      logAuthEvent('Login', true, { userId: userData.id, role: userData.role });
-      authDebug('Login successful');
+      trackLoginFlow('success');
       return true;
-    } catch (err: any) {
-      authDebug('Login error', err);
-      let errorMsg = 'Login failed. Please check your credentials and try again.';
-      
-      if (err.response?.data?.message) {
-        errorMsg = err.response.data.message;
-      } else if (err.message) {
-        errorMsg = err.message;
-      }
-      
-      // Increment login attempts
-      const newAttempts = loginAttempts + 1;
-      setLoginAttempts(newAttempts);
-      trackLoginFlow('Failed login attempt', { attempts: newAttempts, maxAttempts: AUTH_CONFIG.LOGIN_ATTEMPTS_MAX });
-      
-      // Lock account temporarily after maximum attempts
-      if (newAttempts >= AUTH_CONFIG.LOGIN_ATTEMPTS_MAX) {
-        setLoginLocked(true);
-        trackLoginFlow('Account locked due to too many failed attempts');
-        dispatch({ type: 'SET_ERROR', payload: `Too many failed login attempts. Account locked for 15 minutes.` });
-        
-        // Unlock after 15 minutes
-        const timer = setTimeout(() => {
-          setLoginLocked(false);
-          setLoginAttempts(0);
-          trackLoginFlow('Account unlocked after timeout');
-        }, 15 * 60 * 1000);
-        
-        setLockoutTimer(timer);
-      } else {
-        dispatch({ type: 'SET_ERROR', payload: `${errorMsg} (${newAttempts}/${AUTH_CONFIG.LOGIN_ATTEMPTS_MAX} attempts)` });
-      }
-      
-      logAuthEvent('Login', false, { error: errorMsg, attempts: newAttempts });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An error occurred during login';
+      dispatch({ type: 'SET_ERROR', payload: errorMessage });
+      trackLoginFlow('error', { error: errorMessage });
       return false;
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
@@ -704,6 +732,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       trackRegisterFlow('Registration API call starting', { email: userData.email, role: userData.role });
       authDebug('Attempting registration');
       
+      // First register using the API
       const response = await apiClient.register(userData);
       
       if (!response.data || !response.data.token) {
@@ -711,61 +740,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Registration failed: Invalid response from server');
       }
       
-      // Log token info
-      logToken(response.data.token, 'New access token');
-      logToken(response.data.refreshToken, 'New refresh token');
+      // Then use NextAuth to sign in with the new credentials
+      const result = await signIn('credentials', {
+        redirect: false,
+        email: userData.email,
+        password: userData.password
+      });
       
-      // Token storage is handled by ApiClient.handleAuthResponse
-      // Double-check that the tokens are stored
-      const storedToken = localStorage.getItem('token');
-      if (!storedToken) {
-        trackRegisterFlow('Token not found in localStorage after registration, storing manually');
-        localStorage.setItem('token', response.data.token);
-        if (response.data.refreshToken) {
-          localStorage.setItem('refreshToken', response.data.refreshToken);
-        }
+      if (!result?.ok) {
+        trackRegisterFlow('NextAuth sign-in after registration failed', { error: result?.error });
+        throw new Error('Registration successful but sign-in failed');
       }
       
-      const user = response.data.user;
-      dispatch({ type: 'SET_USER', payload: user });
-      trackRegisterFlow('User data set in context', { userId: user.id, role: user.role });
-      
-      // Set up token refresh
-      setupTokenRefresh();
-      trackRegisterFlow('Token refresh setup complete');
-      
-      // Reset last activity timestamp
-      lastActivityRef.current = Date.now();
-      
-      // Navigate to the appropriate dashboard based on user role
-      if (user && user.role) {
-        const defaultPath = getDefaultRouteForUser(user.role);
-        trackRegisterFlow('Redirecting to role-specific dashboard', { role: user.role, path: defaultPath });
-        navigate(defaultPath);
+      // Get the newly created session
+      const session = await getSession();
+      if (session?.user) {
+        // Create a user response from the session
+        const userResponse: UserResponse = {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.name || 'User',
+          role: session.user.role,
+          twoFactorEnabled: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        
+        // Update user in auth context
+        dispatch({ type: 'SET_USER', payload: userResponse });
+        trackRegisterFlow('User data set in context', { userId: userResponse.id, role: userResponse.role });
+        
+        // Set up token refresh
+        setupTokenRefresh();
+        trackRegisterFlow('Token refresh setup complete');
+        
+        // Reset last activity timestamp
+        lastActivityRef.current = Date.now();
+        
+        dispatch({ type: 'SET_LOADING', payload: false });
+        return true;
       } else {
-        trackRegisterFlow('Redirecting to default dashboard');
-        navigate('/dashboard');
+        // This should not happen if result.ok is true
+        dispatch({ type: 'SET_ERROR', payload: 'Failed to retrieve user session after registration' });
+        dispatch({ type: 'SET_LOADING', payload: false });
+        return false;
+      }
+    } catch (error) {
+      console.error('Registration error:', error);
+      trackRegisterFlow('Registration error', { error: String(error) });
+      
+      let errorMessage = 'An error occurred during registration';
+      if (error instanceof Error) {
+        errorMessage = error.message;
       }
       
-      logAuthEvent('Registration', true, { userId: user.id, role: user.role });
-      authDebug('Registration successful');
-      return true;
-    } catch (err: any) {
-      authDebug('Registration error', err);
-      let errorMsg = 'Registration failed. Please try again.';
-      
-      if (err.response?.data?.message) {
-        errorMsg = err.response.data.message;
-      } else if (err.message) {
-        errorMsg = err.message;
-      }
-      
-      dispatch({ type: 'SET_ERROR', payload: errorMsg });
-      logAuthEvent('Registration', false, { error: errorMsg });
-      trackRegisterFlow('Registration failed', { error: errorMsg });
-      return false;
-    } finally {
+      dispatch({ type: 'SET_ERROR', payload: errorMessage });
       dispatch({ type: 'SET_LOADING', payload: false });
+      return false;
     }
   };
 
@@ -846,6 +877,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.user, resetActivityTimer, setupSessionTimeout]);
 
+  // Add retries and connection state
+  const [serverAvailable, setServerAvailable] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    // Add event listener for backend unavailability
+    const handleBackendUnavailable = () => {
+      setServerAvailable(false);
+      logDebug('Server Connection', 'Backend server is unavailable');
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('backend-unavailable', handleBackendUnavailable);
+      
+      return () => {
+        window.removeEventListener('backend-unavailable', handleBackendUnavailable);
+      };
+    }
+  }, []);
+
+  // Add retry logic for server availability
+  useEffect(() => {
+    if (!serverAvailable && retryCount < 5) {
+      const retryTimer = setTimeout(() => {
+        logDebug('Server Connection', `Retry attempt ${retryCount + 1} of 5`);
+        checkAuth();
+        setRetryCount(retryCount + 1);
+      }, 3000 * (retryCount + 1)); // Increasing backoff
+      
+      return () => clearTimeout(retryTimer);
+    }
+  }, [serverAvailable, retryCount, checkAuth]);
+
+  // Synchronize NextAuth session with local auth state
+  useEffect(() => {
+    if (sessionStatus === 'authenticated' && session?.user) {
+      // Convert NextAuth session user to our user format
+      const nextAuthUser: UserResponse = {
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.name || 'User',
+        role: session.user.role,
+        twoFactorEnabled: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      
+      // Update local auth state with NextAuth session
+      if (!user || user.id !== nextAuthUser.id) {
+        dispatch({ type: 'SET_USER', payload: nextAuthUser });
+      }
+      
+      // We know we're authenticated via NextAuth, so set true regardless of localStorage
+      if (!state.isAuthenticated) {
+        dispatch({ type: 'SET_USER', payload: nextAuthUser });
+      }
+    }
+  }, [session, sessionStatus, user, state.isAuthenticated, dispatch]);
+  
+  // Add effect to check NextAuth session before using localStorage
+  useEffect(() => {
+    // Skip if session is loading or we're already checking auth
+    if (sessionStatus === 'loading' || checkingAuth.current) {
+      return;
+    }
+    
+    // If NextAuth says we're unauthenticated, update our local state
+    if (sessionStatus === 'unauthenticated' && state.isAuthenticated) {
+      // Only perform a logout if we think we're authenticated locally
+      logDebug('Auth', 'Session mismatch: NextAuth unauthenticated but local state says authenticated', {
+        isAuthenticated: state.isAuthenticated
+      });
+      
+      dispatch({ type: 'LOGOUT' });
+    }
+  }, [sessionStatus, state.isAuthenticated, dispatch]);
+
   // Make sure the context value includes all required properties
   const contextValue: AuthContextType = {
     ...state,
@@ -856,7 +964,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refreshToken,
     isTokenExpired,
     getTimeUntilExpiration,
-    resetActivityTimer
+    resetActivityTimer,
+    updateUser,
+    setAuth: (auth) => {
+      dispatch({ type: 'SET_USER', payload: auth.user });
+    }
   };
 
   return (

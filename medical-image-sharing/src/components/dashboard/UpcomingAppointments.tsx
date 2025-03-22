@@ -103,7 +103,7 @@ const UpcomingAppointments: React.FC<UpcomingAppointmentsProps> = ({
         const today = new Date().toISOString().split('T')[0];
         
         // Fetch upcoming appointments
-        const response = await apiClient.getDoctorAppointments(providerId, {
+        const response = await apiClient.getProviderAppointments(providerId, {
           status: 'SCHEDULED,CONFIRMED',
           startDate: today,
           limit: limit,
@@ -113,7 +113,6 @@ const UpcomingAppointments: React.FC<UpcomingAppointmentsProps> = ({
           setAppointments(response.data.data);
         } else {
           setAppointments([]);
-          throw new Error('No appointment data received');
         }
       } finally {
         setLoading(false);

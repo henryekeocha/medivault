@@ -75,7 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
   const handleLogout = () => {
     handleClose();
     logout();
-    router.push(routes.root.login as Route);
+    router.push(routes.root.login);
   };
 
   const handleProfile = () => {
@@ -83,8 +83,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
     if (user?.role) {
       const userRole = convertRole(user.role as Role);
       const roleRoutes = getRoutesByRole(userRole);
-      if ('profile' in roleRoutes) {
-        router.push(roleRoutes.profile as Route);
+      if ('profile' in roleRoutes && roleRoutes.profile) {
+        router.push(roleRoutes.profile);
       }
     }
   };
@@ -94,8 +94,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
     if (user?.role) {
       const userRole = convertRole(user.role as Role);
       const roleRoutes = getRoutesByRole(userRole);
-      if ('settings' in roleRoutes) {
-        router.push(roleRoutes.settings as Route);
+      if ('settings' in roleRoutes && roleRoutes.settings) {
+        router.push(roleRoutes.settings);
       }
     }
   };

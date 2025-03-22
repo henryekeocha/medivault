@@ -30,7 +30,7 @@
     ]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/middleware/cognito-auth.ts", "src/services/auth/token-service.ts"],
+  "exclude": ["node_modules", "dist"],
   "ts-node": {
     "esm": true,
     "experimentalSpecifierResolution": "node",

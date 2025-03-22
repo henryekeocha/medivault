@@ -1,8 +1,23 @@
 import { Router } from 'express';
 import { protect } from '../../middleware/auth.js';
-import deviceTrackingService from '../../services/aws/device-tracking.js';
 import { logger } from '../../utils/logger.js';
 import { logAudit } from '../../utils/audit-logger.js';
+import { prisma } from '../../lib/prisma.js';
+import { nanoid } from 'nanoid';
+
+// Define a type for the UserDevice to use with raw queries
+interface UserDevice {
+  id: string;
+  userId: string;
+  deviceName: string;
+  deviceType: string | null;
+  browser: string | null;
+  os: string | null;
+  remembered: boolean;
+  lastUsedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 /**
  * Router for device tracking endpoints
@@ -18,225 +33,295 @@ router.use(protect);
  */
 router.get('/', async (req, res) => {
   try {
-    const username = req.user?.username;
+    const userId = req.user?.id;
     
-    if (!username) {
+    if (!userId) {
       return res.status(401).json({
         success: false,
-        message: 'User not authenticated',
+        message: 'User not authenticated'
       });
     }
     
-    const devices = await deviceTrackingService.listDevices(username);
-    
-    // Audit log the security event
-    logAudit('USER_DEVICES_RETRIEVED', {
-      status: 'success',
-      timestamp: new Date().toISOString(),
-      userId: username,
-      deviceCount: devices.length
-    });
+    // Direct query to the UserDevice model
+    const devices = await prisma.$queryRaw<UserDevice[]>`
+      SELECT * FROM "UserDevice" 
+      WHERE "userId" = ${userId}::uuid 
+      ORDER BY "lastUsedAt" DESC
+    `;
     
     return res.status(200).json({
       success: true,
-      devices: devices.map((device: any) => ({
-        deviceKey: device.DeviceKey,
-        deviceName: device.DeviceAttributes?.find((attr: any) => attr.Name === 'device_name')?.Value || 'Unknown Device',
-        deviceType: device.DeviceAttributes?.find((attr: any) => attr.Name === 'device_type')?.Value || 'Unknown',
-        lastAuthenticated: device.DeviceLastAuthenticatedDate,
-        lastModified: device.DeviceLastModifiedDate,
-        remembered: device.DeviceRememberedStatus === 'remembered',
-      })),
+      devices
     });
   } catch (error) {
-    // System log for operational debugging
-    logger.error('Error getting devices:', error);
-    
-    // Audit log for security monitoring
-    logAudit('USER_DEVICES_RETRIEVAL_FAILED', {
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      userId: req.user?.username,
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
-    
+    logger.error('Error getting user devices:', error);
     return res.status(500).json({
       success: false,
-      message: 'An error occurred while getting devices',
+      message: 'Error retrieving devices'
     });
   }
 });
 
 /**
- * Get authentication events for the current user
- * GET /auth/devices/events
+ * Get a specific device
+ * GET /auth/devices/:deviceId
  */
-router.get('/events', async (req, res) => {
+router.get('/:deviceId', async (req, res) => {
   try {
-    const username = req.user?.username;
+    const { deviceId } = req.params;
+    const userId = req.user?.id;
     
-    if (!username) {
+    if (!userId) {
       return res.status(401).json({
         success: false,
-        message: 'User not authenticated',
+        message: 'User not authenticated'
       });
     }
     
-    const events = await deviceTrackingService.listAuthEvents(username);
+    // Direct query to get a specific device
+    const devices = await prisma.$queryRaw<UserDevice[]>`
+      SELECT * FROM "UserDevice" 
+      WHERE "id" = ${deviceId}::uuid AND "userId" = ${userId}::uuid
+    `;
     
-    // Audit log the security event
-    logAudit('USER_AUTH_EVENTS_RETRIEVED', {
-      status: 'success',
-      timestamp: new Date().toISOString(),
-      userId: username,
-      eventCount: events.length
-    });
+    const device = devices[0];
+    
+    if (!device) {
+      return res.status(404).json({
+        success: false,
+        message: 'Device not found'
+      });
+    }
     
     return res.status(200).json({
       success: true,
-      events: events.map((event: any) => ({
-        eventId: event.EventId,
-        eventType: event.EventType,
-        eventResponse: event.EventResponse,
-        eventRisk: event.EventRisk,
-        createdAt: event.CreationDate,
-        ipAddress: event.EventContextData?.IpAddress,
-        city: event.EventContextData?.City,
-        country: event.EventContextData?.Country,
-        deviceName: event.EventContextData?.DeviceName,
-      })),
+      device
     });
   } catch (error) {
-    // System log for operational debugging
-    logger.error('Error getting auth events:', error);
-    
-    // Audit log for security monitoring
-    logAudit('USER_AUTH_EVENTS_RETRIEVAL_FAILED', {
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      userId: req.user?.username,
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
-    
+    logger.error('Error getting device details:', error);
     return res.status(500).json({
       success: false,
-      message: 'An error occurred while getting authentication events',
+      message: 'Error retrieving device'
     });
   }
 });
 
 /**
- * Forget a device
- * DELETE /auth/devices/:deviceKey
+ * Register a new device
+ * POST /auth/devices
  */
-router.delete('/:deviceKey', async (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const { deviceKey } = req.params;
-    const username = req.user?.username;
+    const { deviceName, deviceType, browser, os } = req.body;
+    const userId = req.user?.id;
     
-    if (!username) {
+    if (!userId) {
       return res.status(401).json({
         success: false,
-        message: 'User not authenticated',
+        message: 'User not authenticated'
       });
     }
     
-    await deviceTrackingService.forgetDevice(username, deviceKey);
-    
-    // System log for operational tracking
-    logger.info(`Device ${deviceKey} forgotten for user ${username}`);
-    
-    // Audit log for security monitoring
-    logAudit('USER_DEVICE_REMOVED', {
-      status: 'success',
-      timestamp: new Date().toISOString(),
-      userId: username,
-      deviceKey: deviceKey
-    });
-    
-    return res.status(200).json({
-      success: true,
-      message: 'Device forgotten successfully',
-    });
-  } catch (error) {
-    // System log for operational debugging
-    logger.error('Error forgetting device:', error);
-    
-    // Audit log for security monitoring
-    logAudit('USER_DEVICE_REMOVAL_FAILED', {
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      userId: req.user?.username,
-      deviceKey: req.params.deviceKey,
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
-    
-    return res.status(500).json({
-      success: false,
-      message: 'An error occurred while forgetting the device',
-    });
-  }
-});
-
-/**
- * Update device status (remembered or not remembered)
- * PUT /auth/devices/:deviceKey
- */
-router.put('/:deviceKey', async (req, res) => {
-  try {
-    const { deviceKey } = req.params;
-    const { remembered } = req.body;
-    const username = req.user?.username;
-    
-    if (!username) {
-      return res.status(401).json({
-        success: false,
-        message: 'User not authenticated',
-      });
-    }
-    
-    if (typeof remembered !== 'boolean') {
+    if (!deviceName) {
       return res.status(400).json({
         success: false,
-        message: 'The "remembered" field must be a boolean',
+        message: 'Device name is required'
       });
     }
     
-    await deviceTrackingService.updateDeviceStatus(username, deviceKey, remembered);
+    // Generate a new UUID
+    const deviceId = nanoid();
+    const now = new Date();
     
-    // System log for operational tracking
-    logger.info(`Device ${deviceKey} ${remembered ? 'remembered' : 'not remembered'} for user ${username}`);
+    // Direct insertion using raw SQL
+    await prisma.$executeRaw`
+      INSERT INTO "UserDevice" ("id", "userId", "deviceName", "deviceType", "browser", "os", "lastUsedAt", "createdAt", "updatedAt")
+      VALUES (
+        ${deviceId}::uuid, 
+        ${userId}::uuid, 
+        ${deviceName}, 
+        ${deviceType || null}, 
+        ${browser || null}, 
+        ${os || null}, 
+        ${now}, 
+        ${now}, 
+        ${now}
+      )
+    `;
     
-    // Audit log for security monitoring
-    logAudit('USER_DEVICE_UPDATED', {
+    // Get the newly created device
+    const devices = await prisma.$queryRaw<UserDevice[]>`
+      SELECT * FROM "UserDevice" 
+      WHERE "id" = ${deviceId}::uuid
+    `;
+    
+    const newDevice = devices[0];
+    
+    // Log the device registration
+    await logAudit('USER_DEVICE_UPDATED', {
+      userId,
+      action: 'DEVICE_REGISTERED',
+      resource: 'DEVICE',
+      resourceId: deviceId,
+      details: `Device ${deviceName} registered`,
+      ip: req.ip || 'unknown',
       status: 'success',
-      timestamp: new Date().toISOString(),
-      userId: username,
-      deviceKey: deviceKey,
-      remembered: remembered
+      timestamp: new Date().toISOString()
+    });
+    
+    return res.status(201).json({
+      success: true,
+      device: newDevice,
+      message: 'Device registered successfully'
+    });
+  } catch (error) {
+    logger.error('Error registering device:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error registering device'
+    });
+  }
+});
+
+/**
+ * Update a device
+ * PUT /auth/devices/:deviceId
+ */
+router.put('/:deviceId', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { deviceName, remembered } = req.body;
+    const userId = req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+    
+    // First check if the device exists and belongs to the user
+    const devices = await prisma.$queryRaw<UserDevice[]>`
+      SELECT * FROM "UserDevice" 
+      WHERE "id" = ${deviceId}::uuid AND "userId" = ${userId}::uuid
+    `;
+    
+    const existingDevice = devices[0];
+    
+    if (!existingDevice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Device not found'
+      });
+    }
+    
+    // Update the device using raw SQL
+    const finalDeviceName = deviceName || existingDevice.deviceName;
+    const finalRemembered = remembered !== undefined ? remembered : existingDevice.remembered;
+    const now = new Date();
+    
+    await prisma.$executeRaw`
+      UPDATE "UserDevice" 
+      SET 
+        "deviceName" = ${finalDeviceName}, 
+        "remembered" = ${finalRemembered}, 
+        "lastUsedAt" = ${now}, 
+        "updatedAt" = ${now}
+      WHERE "id" = ${deviceId}::uuid AND "userId" = ${userId}::uuid
+    `;
+    
+    // Get the updated device
+    const updatedDevices = await prisma.$queryRaw<UserDevice[]>`
+      SELECT * FROM "UserDevice" 
+      WHERE "id" = ${deviceId}::uuid
+    `;
+    
+    const updatedDevice = updatedDevices[0];
+    
+    // Log the device update
+    await logAudit('USER_DEVICE_UPDATED', {
+      userId,
+      action: 'DEVICE_UPDATED',
+      resource: 'DEVICE',
+      resourceId: deviceId,
+      details: `Device ${finalDeviceName} updated`,
+      ip: req.ip || 'unknown',
+      status: 'success',
+      timestamp: new Date().toISOString()
     });
     
     return res.status(200).json({
       success: true,
-      message: `Device ${remembered ? 'remembered' : 'not remembered'} successfully`,
+      device: updatedDevice,
+      message: 'Device updated successfully'
     });
   } catch (error) {
-    // System log for operational debugging
-    logger.error('Error updating device status:', error);
-    
-    // Audit log for security monitoring
-    logAudit('USER_DEVICE_UPDATE_FAILED', {
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      userId: req.user?.username,
-      deviceKey: req.params.deviceKey,
-      remembered: req.body?.remembered,
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
-    
+    logger.error('Error updating device:', error);
     return res.status(500).json({
       success: false,
-      message: 'An error occurred while updating the device status',
+      message: 'Error updating device'
+    });
+  }
+});
+
+/**
+ * Remove a device
+ * DELETE /auth/devices/:deviceId
+ */
+router.delete('/:deviceId', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const userId = req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+    
+    // First check if the device exists and belongs to the user
+    const devices = await prisma.$queryRaw<UserDevice[]>`
+      SELECT * FROM "UserDevice" 
+      WHERE "id" = ${deviceId}::uuid AND "userId" = ${userId}::uuid
+    `;
+    
+    const device = devices[0];
+    
+    if (!device) {
+      return res.status(404).json({
+        success: false,
+        message: 'Device not found'
+      });
+    }
+    
+    // Delete the device using raw SQL
+    await prisma.$executeRaw`
+      DELETE FROM "UserDevice" 
+      WHERE "id" = ${deviceId}::uuid AND "userId" = ${userId}::uuid
+    `;
+    
+    // Log the device removal
+    await logAudit('USER_DEVICE_REMOVED', {
+      userId,
+      action: 'DEVICE_REMOVED',
+      resource: 'DEVICE',
+      resourceId: deviceId,
+      details: `Device ${device.deviceName} removed`,
+      ip: req.ip || 'unknown',
+      status: 'success',
+      timestamp: new Date().toISOString()
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Device removed successfully'
+    });
+  } catch (error) {
+    logger.error('Error removing device:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error removing device'
     });
   }
 });

@@ -1,0 +1,57 @@
+
+> medical-image-sharing-backend@1.0.0 dev
+> tsx watch src/index.ts
+
+Initializing Cognito service with:
+      Region: us-east-1
+      Access Key ID: AKIAT...
+      Secret Key: ******
+    
+Cognito Configuration:
+      Region: us-east-1
+      User Pool ID: us-east-1_J55vJK200
+      Client ID: 4preov306p77f3p5lpm4khgb5p
+      User Pool Name: medivault
+    
+Initializing Social Identity Provider service with:
+      Region: us-east-1
+      Access Key ID: AKIAT...
+    
+Initializing Cognito service with:
+      Region: us-east-1
+      Access Key ID: AKIAT...
+      Secret Key: ******
+    
+Cognito Configuration:
+      Region: us-east-1
+      User Pool ID: us-east-1_J55vJK200
+      Client ID: 4preov306p77f3p5lpm4khgb5p
+      User Pool Name: medivault
+    
+Initializing Cognito service with:
+      Region: us-east-1
+      Access Key ID: AKIAT...
+      Secret Key: ******
+    
+Cognito Configuration:
+      Region: us-east-1
+      User Pool ID: us-east-1_J55vJK200
+      Client ID: 4preov306p77f3p5lpm4khgb5p
+      User Pool Name: medivault
+    
+Initializing Cognito service with:
+      Region: us-east-1
+      Access Key ID: AKIAT...
+      Secret Key: ******
+    
+Cognito Configuration:
+      Region: us-east-1
+      User Pool ID: us-east-1_J55vJK200
+      Client ID: 4preov306p77f3p5lpm4khgb5p
+      User Pool Name: medivault
+    
+Using development CORS settings
+CORS_ORIGIN environment variable: http://localhost:3000
+CORS configured with origins: http://localhost:3000, http://127.0.0.1:3000
+Database connection established
+Server is running on port 3001 (binding on 0.0.0.0)

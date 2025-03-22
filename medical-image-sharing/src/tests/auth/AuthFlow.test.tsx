@@ -76,6 +76,44 @@ const localStorageMock = (() => {
 
 Object.defineProperty(window, 'localStorage', { value: localStorageMock });
 
+// Add jest.mock for next-auth
+jest.mock('next-auth/react', () => {
+  const originalModule = jest.requireActual('next-auth/react');
+  return {
+    __esModule: true,
+    ...originalModule,
+    signIn: jest.fn(),
+    signOut: jest.fn(),
+    useSession: jest.fn(() => {
+      return {
+        data: {
+          user: {
+            id: 'test-user-id',
+            email: 'test@example.com',
+            name: 'Test User',
+            role: 'PATIENT'
+          },
+          accessToken: 'mock-access-token',
+          expires: new Date(Date.now() + 3600 * 1000).toISOString()
+        },
+        status: 'authenticated'
+      };
+    }),
+    getSession: jest.fn(() => {
+      return Promise.resolve({
+        user: {
+          id: 'test-user-id',
+          email: 'test@example.com',
+          name: 'Test User',
+          role: 'PATIENT'
+        },
+        accessToken: 'mock-access-token',
+        expires: new Date(Date.now() + 3600 * 1000).toISOString()
+      });
+    })
+  };
+});
+
 // Test component to access auth context
 const TestComponent = () => {
   const { user, login, logout, register, isAuthenticated } = useAuth();

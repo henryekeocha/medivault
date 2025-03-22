@@ -1,0 +1,88 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: medical-imaging-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: medical_imaging
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - medical-network
+
+  # Database initialization service
+  db-init:
+    image: node:18-alpine
+    container_name: medical-imaging-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./scripts/docker-init.sh:/docker-init.sh
+      - ./backend:/app/backend
+    command: ["/bin/sh", "-c", "apk add --no-cache postgresql-client && chmod +x /docker-init.sh && /docker-init.sh"]
+    environment:
+      SEED_DATABASE: "true"
+    networks:
+      - medical-network
+
+  # Backend API Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medical-imaging-backend
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/medical_imaging?schema=public
+      CORS_ORIGIN: http://localhost:3002
+      FRONTEND_URL: http://localhost:3002
+      AWS_ACCESS_KEY_ID: "placeholder-for-development"
+      AWS_SECRET_ACCESS_KEY: "placeholder-for-development"
+      AWS_REGION: "us-east-1"
+    ports:
+      - "3005:3001"
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      - db-init
+    networks:
+      - medical-network
+    restart: unless-stopped
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./medical-image-sharing
+      dockerfile: Dockerfile
+    container_name: medical-imaging-frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:3005/api
+      NEXT_PUBLIC_WS_URL: ws://localhost:3005
+      NEXT_PUBLIC_AWS_REGION: "us-east-1"
+    ports:
+      - "3002:3000"
+    depends_on:
+      - backend
+    networks:
+      - medical-network
+    restart: unless-stopped
+
+networks:
+  medical-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  backend_uploads: 

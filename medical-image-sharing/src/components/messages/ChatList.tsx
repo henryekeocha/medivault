@@ -71,21 +71,32 @@ export function ChatList({
 
     try {
       const response = await apiClient.getChats();
-      if (!response || !response.data) {
+      if (!response || !response.data || !response.data.conversations) {
         throw new Error('Invalid response from server');
       }
       
       const currentUserId = apiClient.getCurrentUserId() || '';
       
-      // The response is a PaginatedResponse<Message>
-      const messages = response.data.map((message: Message) => {
-        // Transform the Message to ExtendedMessage with additional properties
-        return {
-          ...message,
-          isSender: message.senderId === currentUserId,
-          unread: message.readAt === null || message.readAt === undefined
-        } as ExtendedMessage;
-      });
+      // Transform the conversations into the format expected by the component
+      const messages = response.data.conversations.map((conversation: any) => ({
+        id: conversation.participantId, // Use participantId as the message ID
+        senderId: currentUserId,
+        recipientId: conversation.participantId,
+        content: conversation.lastMessage,
+        createdAt: conversation.lastMessageAt,
+        sender: {
+          id: currentUserId,
+          name: 'You',
+          email: ''
+        },
+        recipient: {
+          id: conversation.participantId,
+          name: conversation.participantName,
+          email: conversation.participantEmail
+        },
+        isSender: true,
+        unread: false // We'll need to implement this if needed
+      })) as ExtendedMessage[];
       
       setChats(messages);
     } catch (err: any) {

@@ -1,9 +1,9 @@
 /**
- * This file exports the useToast hook from the Toast component
+ * This file exports the useToast hook from the ToastContext
  * to maintain a consistent import pattern through the hooks directory
  */
 
-import { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 
 export { useToast };
 

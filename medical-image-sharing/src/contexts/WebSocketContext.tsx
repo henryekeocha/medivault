@@ -1,9 +1,10 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
-import { useAuth } from './AuthContext';
-import { useToast } from '@/components/Toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import { io, Socket } from 'socket.io-client';
+import { useSession } from 'next-auth/react';
 
 // Define types for the WebSocket context
 interface WebSocketContextType {
@@ -33,6 +34,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const { user, loading } = useAuth();
+  const { data: session, status: sessionStatus } = useSession();
   
   // Use toast hook unconditionally
   const toast = useToast();
@@ -57,23 +59,28 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (loading || !user) return null;
     
     const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001';
-    const token = localStorage.getItem('token');
+    
+    // Get token from session
+    const token = session?.accessToken;
+    
+    // Create auth object - always attempt to connect even without a token
+    // The server may allow anonymous connections or have other fallback mechanisms
+    const auth = token ? { token } : {};
     
     if (!token) {
-      console.warn('WebSocket: No token available for authentication');
-      return null;
+      console.warn('WebSocket: No NextAuth token available - attempting connection without authentication');
+    } else {
+      console.log('WebSocket: Connecting with token from NextAuth session');
     }
     
-    console.log('Connecting to WebSocket with token', token.substring(0, 10) + '...');
-    
     return io(SOCKET_URL, {
-      auth: { token },
+      auth,
       reconnection: true,
       reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
       reconnectionDelay: RECONNECT_DELAY,
       transports: ['websocket', 'polling']
     });
-  }, [user, loading]);
+  }, [user, loading, session]);
 
   // Handle connection events and cleanup
   useEffect(() => {
@@ -89,14 +96,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     
-    // Check token before attempting connection
-    const token = localStorage.getItem('token');
-    if (!token) {
-      console.error('Cannot connect to WebSocket: No authentication token found');
+    // Wait until session is loaded
+    if (sessionStatus === 'loading') {
       return;
     }
     
-    // Setup socket connection
+    // Don't block connection on missing token
+    // Setup socket connection regardless of token availability
     const socket = setupSocket();
     if (!socket) return;
     
@@ -157,7 +163,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsConnected(false);
       }
     };
-  }, [setupSocket]);  // Only depend on the setupSocket callback which has stable dependencies
+  }, [setupSocket, session, sessionStatus]);  // Add sessionStatus to dependencies
 
   // Add a listener for storage events to reconnect when token changes
   useEffect(() => {

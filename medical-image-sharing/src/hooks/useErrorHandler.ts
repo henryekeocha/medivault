@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import { handleError, isSuccessResponse, getResponseErrorMessage } from '@/utils/errorHandling';
 
 interface ErrorHandlerHookOptions {

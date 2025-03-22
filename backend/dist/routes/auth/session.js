@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { protect } from '../../middleware/auth.js';
-import { CognitoService } from '../../services/aws/cognito-service.js';
 import { logger } from '../../utils/logger.js';
+import { prisma } from '../../lib/prisma.js';
+import jwt from 'jsonwebtoken';
 const router = Router();
-const cognitoService = new CognitoService();
 /**
  * Refresh the session tokens
  * POST /auth/session/refresh
@@ -17,10 +17,40 @@ router.post('/refresh', async (req, res) => {
                 message: 'Refresh token is required'
             });
         }
-        const tokens = await cognitoService.refreshSession(refreshToken);
+        // Verify the refresh token
+        let payload;
+        try {
+            payload = jwt.verify(refreshToken, process.env.JWT_SECRET);
+        }
+        catch (error) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid refresh token'
+            });
+        }
+        // Get user from database - ensure we have a string ID
+        const userId = typeof payload.sub === 'function' ? payload.sub() : payload.sub;
+        const user = await prisma.user.findUnique({
+            where: { id: userId }
+        });
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        // Generate new tokens
+        const newAccessToken = jwt.sign({
+            sub: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role
+        }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const newRefreshToken = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
         return res.status(200).json({
             success: true,
-            ...tokens
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken
         });
     }
     catch (error) {
@@ -46,14 +76,37 @@ router.get('/', async (req, res) => {
                 message: 'Access token is required'
             });
         }
-        // Get the user information to verify the session is valid
-        const user = await cognitoService.getUser(accessToken);
+        // Verify the token
+        let payload;
+        try {
+            payload = jwt.verify(accessToken, process.env.JWT_SECRET);
+        }
+        catch (error) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid token',
+                session: { isValid: false }
+            });
+        }
+        // Get user from database - ensure we have a string ID
+        const userId = typeof payload.sub === 'function' ? payload.sub() : payload.sub;
+        // Get user from database
+        const user = await prisma.user.findUnique({
+            where: { id: userId }
+        });
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found',
+                session: { isValid: false }
+            });
+        }
         return res.status(200).json({
             success: true,
             session: {
                 isValid: true,
-                username: user.Username,
-                email: user.UserAttributes?.find(attr => attr.Name === 'email')?.Value
+                username: user.name,
+                email: user.email
             }
         });
     }
@@ -74,14 +127,8 @@ router.get('/', async (req, res) => {
  */
 router.post('/revoke', async (req, res) => {
     try {
-        const accessToken = req.headers.authorization?.replace('Bearer ', '');
-        if (!accessToken) {
-            return res.status(401).json({
-                success: false,
-                message: 'Access token is required'
-            });
-        }
-        await cognitoService.signOut(accessToken);
+        // With JWT tokens, we don't need to invalidate them on the server
+        // The client should remove the tokens from storage
         return res.status(200).json({
             success: true,
             message: 'Session invalidated successfully'

@@ -8,15 +8,25 @@ import { NotificationProvider } from '@/contexts/NotificationContext';
 import { AccessibilityProvider } from '@/contexts/AccessibilityContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
-import { CognitoAuthProvider } from '@/contexts/CognitoAuthContext';
 import GlobalErrorBoundary from '@/components/GlobalErrorBoundary';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import enUS from 'date-fns/locale/en-US';
 import { WebSocketService } from '@/lib/api/services/websocket.service'; 
 import { CollaborationService } from '@/lib/api/services/collaboration.service';
-import { AmplifyProvider } from '@/components/AmplifyProvider';
-import SessionManager from '@/components/auth/SessionManager';
+import { SessionProvider } from 'next-auth/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// Create a client
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+      staleTime: 5 * 60 * 1000, // 5 minutes
+    },
+  },
+});
 
 // Custom hook for service initialization
 const useServices = () => {
@@ -76,7 +86,7 @@ const SafeWebSocketProvider: React.FC<{children: React.ReactNode}> = ({ children
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <AmplifyProvider>
+    <SessionProvider>
       <NextThemesProvider 
         attribute="class"
         defaultTheme="system"
@@ -85,26 +95,24 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <ThemeProvider>
           <GlobalErrorBoundary>
             <AuthProvider>
-              <CognitoAuthProvider>
+              <QueryClientProvider client={queryClient}>
                 <ToastProvider>
                   <SafeWebSocketProvider>
                     <NotificationProvider>
                       <AccessibilityProvider>
                         <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enUS}>
                           <ServiceInitializer />
-                          <SessionManager>
-                            {children}
-                          </SessionManager>
+                          {children}
                         </LocalizationProvider>
                       </AccessibilityProvider>
                     </NotificationProvider>
                   </SafeWebSocketProvider>
                 </ToastProvider>
-              </CognitoAuthProvider>
+              </QueryClientProvider>
             </AuthProvider>
           </GlobalErrorBoundary>
         </ThemeProvider>
       </NextThemesProvider>
-    </AmplifyProvider>
+    </SessionProvider>
   );
 } 

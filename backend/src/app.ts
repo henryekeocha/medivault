@@ -10,6 +10,7 @@ import morgan from 'morgan';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { errorHandler } from './middleware/errorHandler.js';
+import { bypassAuth } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import imageRoutes from './routes/images.js';
@@ -24,6 +25,7 @@ import appointmentRoutes from './routes/appointments.js';
 import healthMetricRoutes from './routes/health-metrics.js'; 
 import chatbotRoutes from './routes/chatbot.js';
 import systemSettingsRoutes from './routes/system.settings.js';
+import analyticsRoutes from './routes/analytics.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,7 +56,21 @@ app.use(helmet({
 
 // CORS configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: function(origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://[::1]:3000'
+    ];
+    
+    // Allow requests with no origin (like mobile apps, curl requests, etc.)
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked request from origin: ${origin}`);
+      callback(null, false);
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   credentials: true,
@@ -96,24 +112,55 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Simple diagnostic endpoint for debugging
+app.get('/api/test', (req: Request, res: Response) => {
+  res.json({ 
+    message: 'Test endpoint is working', 
+    timestamp: new Date().toISOString(),
+    env: {
+      CORS_ORIGIN: process.env.CORS_ORIGIN,
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT,
+      AWS_REGION: process.env.AWS_REGION
+    }
+  });
+});
+
+// Basic POST endpoint test
+app.post('/api/test-auth', (req: Request, res: Response) => {
+  console.log('Test auth endpoint hit with body:', req.body);
+  res.json({ 
+    success: true, 
+    message: 'Test auth endpoint working',
+    receivedData: {
+      email: req.body?.email || 'not provided',
+      passwordProvided: req.body?.password ? true : false
+    }
+  });
+});
+
 // API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
-// API routes
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/users', userRoutes);
-app.use('/api/v1/images', imageRoutes);
-app.use('/api/v1/messages', messageRoutes);
-app.use('/api/v1/patients', patientRoutes);
-app.use('/api/v1/providers', providerRoutes);
-app.use('/api/v1/settings', settingsRoutes);
-app.use('/api/v1/audit', auditRoutes);
-app.use('/api/v1/analysis', analysisRoutes);
-app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/appointments', appointmentRoutes);
-app.use('/api/v1/health-metrics', healthMetricRoutes);
+// Apply bypassAuth to all routes - it will either bypass auth for public routes or apply the protect middleware
+app.use(bypassAuth);
+
+// Regular routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/images', imageRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/patients', patientRoutes);
+app.use('/api/providers', providerRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/audit', auditRoutes);
+app.use('/api/analysis', analysisRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/appointments', appointmentRoutes);
+app.use('/api/health-metrics', healthMetricRoutes);
 app.use('/api/chatbot', chatbotRoutes);
-app.use('/api/settings', systemSettingsRoutes);
+app.use('/api/system-settings', systemSettingsRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Error handling
 app.use(errorHandler as ErrorRequestHandler);

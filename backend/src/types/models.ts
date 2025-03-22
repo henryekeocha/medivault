@@ -21,7 +21,6 @@ export interface User {
   specialty?: ProviderSpecialty;
   twoFactorEnabled: boolean;
   twoFactorSecret?: string;
-  backupCodes?: string[];
   lastLoginAt?: Date;
   lastLoginIp?: string;
   createdAt: Date;
@@ -155,7 +154,6 @@ export interface AppointmentWithUsers {
     isActive: boolean;
     twoFactorEnabled: boolean;
     twoFactorSecret: string | null;
-    backupCodes: string[];
   };
   doctor: {
     id: string;
@@ -171,7 +169,6 @@ export interface AppointmentWithUsers {
     isActive: boolean;
     twoFactorEnabled: boolean;
     twoFactorSecret: string | null;
-    backupCodes: string[];
   };
 }
 

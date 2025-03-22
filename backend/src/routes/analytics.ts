@@ -1,17 +1,23 @@
 import express, { RequestHandler } from 'express';
 import * as analyticsController from '../controllers/analytics.controller.js';
 import { protect } from '../middleware/auth.js';
-import { hipaaLogger } from '../middleware/encryption.js';
+import { injectAnalyticsService } from '../middleware/analytics.js';
 
 const router = express.Router();
 
-// Apply protection and HIPAA logging to all routes
+// Apply authentication middleware to all routes
 router.use(protect as RequestHandler);
-router.use(hipaaLogger as RequestHandler);
 
-// Analytics routes
-router.get('/system', analyticsController.getSystemMetrics as unknown as RequestHandler);
-router.get('/users/:userId', analyticsController.getUserMetrics as unknown as RequestHandler);
+// Inject analytics service into request
+router.use(injectAnalyticsService as RequestHandler);
+
+// User metrics
+router.get('/users/:userId/metrics', analyticsController.getUserMetrics as unknown as RequestHandler);
+
+// Provider analytics
+router.get('/provider/:providerId', analyticsController.getProviderStatistics as unknown as RequestHandler);
+
+// File access history
 router.get('/files/:fileId/history', analyticsController.getFileAccessHistory as unknown as RequestHandler);
 
 export default router; 

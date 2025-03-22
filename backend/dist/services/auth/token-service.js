@@ -28,9 +28,10 @@ export class TokenService {
             email: user.email,
             role: user.role
         };
-        return sign(payload, this.accessTokenSecret, {
-            expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
-        });
+        const options = {
+            expiresIn: (process.env.JWT_ACCESS_EXPIRY || '15m')
+        };
+        return sign(payload, this.accessTokenSecret, options);
     }
     /**
      * Generate a refresh token for a user
@@ -43,9 +44,10 @@ export class TokenService {
             email: user.email,
             role: user.role
         };
-        return sign(payload, this.refreshTokenSecret, {
-            expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d'
-        });
+        const options = {
+            expiresIn: (process.env.JWT_REFRESH_EXPIRY || '7d')
+        };
+        return sign(payload, this.refreshTokenSecret, options);
     }
     /**
      * Verify an access token

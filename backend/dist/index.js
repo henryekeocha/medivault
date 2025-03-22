@@ -9,6 +9,7 @@ import messageRoutes from './routes/messages.js';
 import settingsRoutes from './routes/settings.js';
 import fileRoutes from './routes/files.js';
 import analyticsRoutes from './routes/analytics.js';
+import healthRoutes from './routes/health.routes.js';
 import { prisma } from './lib/prisma.js';
 import { createServer } from 'http';
 import { WebSocketService } from './services/websocket.service.js';
@@ -21,26 +22,35 @@ dotenv.config();
 const app = express();
 // Middleware
 app.use(express.json());
-// More permissive CORS configuration for development
+// CORS configuration
 if (process.env.NODE_ENV === 'development') {
     console.log('Using development CORS settings');
+    // Log the exact CORS_ORIGIN for debugging
+    console.log(`CORS_ORIGIN environment variable: ${process.env.CORS_ORIGIN}`);
     app.use(cors({
-        origin: '*', // Allow all origins in development
+        origin: ['http://localhost:3000', 'http://127.0.0.1:3000'], // Allow both localhost and 127.0.0.1
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
         optionsSuccessStatus: 200
     }));
+    // Log the CORS configuration
+    console.log(`CORS configured with origins: http://localhost:3000, http://127.0.0.1:3000`);
 }
 else {
+    // In production, use the CORS_ORIGIN from environment
+    const productionOrigin = process.env.CORS_ORIGIN || 'https://your-production-domain.com';
+    console.log(`Using production CORS settings with origin: ${productionOrigin}`);
     app.use(cors({
-        origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+        origin: productionOrigin,
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
         optionsSuccessStatus: 200
     }));
 }
+// Health check route - should be public and outside API prefix
+app.use('/health', healthRoutes);
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -66,17 +76,30 @@ initializeServices(wsService, notificationService, analyticsService);
 // Add services to request object
 app.use(injectServices);
 // Start server
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || "3001", 10);
 const server_url = `http://localhost:${PORT}`;
+// Add debug logging for database connection
+console.log('Database URL:', process.env.DATABASE_URL ? 'Set (hidden for security)' : 'Not set');
+console.log('Environment:', process.env.NODE_ENV || 'development');
+// Add a fallback database URL for development if it's not set
+if (!process.env.DATABASE_URL && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV)) {
+    console.log('Using local database for development');
+    process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/medicalimaging';
+}
+// Check if critical environment variables are set
+if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL environment variable is not set!');
+    process.exit(1);
+}
 // Start server and connect to database
 async function bootstrap() {
     try {
         // Test database connection
         await prisma.$connect();
         console.log('Database connection established');
-        // Start server
-        server.listen(PORT, () => {
-            console.log(`Server is running on port ${PORT}`);
+        // Start server and explicitly bind to 0.0.0.0 (all interfaces)
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`Server is running on port ${PORT} (binding on 0.0.0.0)`);
         });
     }
     catch (error) {

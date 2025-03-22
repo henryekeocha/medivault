@@ -1,17 +1,47 @@
 import { NextAuthOptions } from 'next-auth';
-import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import FacebookProvider from 'next-auth/providers/facebook';
-import { compare } from 'bcryptjs';
-import { prisma } from '@/lib/db';
 import { Role } from '@prisma/client';
+import prisma from '@/lib/prisma';
+import bcrypt from 'bcryptjs';
 
 // Alias the Prisma Role enum for backward compatibility
 export { Role as UserRole } from '@prisma/client';
 
+// Define extended types for NextAuth.js
+declare module "next-auth" {
+  interface User {
+    id: string;
+    email: string;
+    name: string;
+    role: Role;
+    accessToken?: string;
+    refreshToken?: string;
+  }
+
+  interface Session {
+    user: {
+      id: string;
+      email: string;
+      name: string;
+      role: Role;
+    };
+    accessToken?: string;
+    refreshToken?: string;
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    id?: string;
+    role?: Role;
+    accessToken?: string;
+    refreshToken?: string;
+  }
+}
+
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -21,35 +51,97 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
-          return null;
+          throw new Error('Email and password are required');
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email }
-        });
+        try {
+          // First try to authenticate with the backend API
+          const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3001/api';
+          console.log(`Authenticating with backend at ${backendUrl}/auth/login`);
+          
+          const response = await fetch(`${backendUrl}/auth/login`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: credentials.email,
+              password: credentials.password,
+            }),
+          });
 
-        if (!user || !user.password) {
-          return null;
+          if (response.ok) {
+            const data = await response.json();
+            
+            // Successfully authenticated with the backend
+            if (data.status === 'success' && data.data?.user) {
+              console.log('Backend authentication successful');
+              return {
+                id: data.data.user.id,
+                email: data.data.user.email,
+                name: data.data.user.name || 'User',
+                role: data.data.user.role,
+                accessToken: data.data.token,
+                refreshToken: data.data.refreshToken,
+              };
+            }
+          }
+          
+          // Fall back to database authentication
+          console.log('Backend authentication failed, falling back to database');
+          const user = await prisma.user.findUnique({
+            where: {
+              email: credentials.email,
+            },
+          });
+
+          if (!user) {
+            throw new Error('Invalid credentials');
+          }
+
+          if (!user.isActive) {
+            throw new Error('Your account is inactive');
+          }
+
+          if (user.isLocked) {
+            throw new Error('Your account is locked');
+          }
+
+          const isValid = await bcrypt.compare(credentials.password, user.password);
+
+          if (!isValid) {
+            // Increment failed login attempts
+            await prisma.user.update({
+              where: { id: user.id },
+              data: {
+                failedLoginAttempts: user.failedLoginAttempts + 1,
+                isLocked: user.failedLoginAttempts >= 4,
+                accountLockExpiresAt: user.failedLoginAttempts >= 4 ? new Date(Date.now() + 30 * 60 * 1000) : null,
+              },
+            });
+            throw new Error('Invalid password');
+          }
+
+          // Reset failed login attempts on successful login
+          await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              failedLoginAttempts: 0,
+              lastLoginAt: new Date(),
+              lastActiveAt: new Date(),
+            },
+          });
+
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+          };
+        } catch (error) {
+          console.error('Auth error:', error);
+          throw error;
         }
-
-        const isValid = await compare(credentials.password, user.password);
-
-        if (!isValid) {
-          return null;
-        }
-
-        // Update user's last login time
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { lastLoginAt: new Date() }
-        });
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role
-        };
       }
     }),
     GoogleProvider({
@@ -84,130 +176,45 @@ export const authOptions: NextAuthOptions = {
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
         token.role = user.role;
+        token.accessToken = user.accessToken;
+        token.refreshToken = user.refreshToken;
       }
 
-      // If user's session is active, check if their role has changed
-      if (token.id) {
-        const userDetails = await prisma.user.findUnique({
-          where: { id: token.id },
-          select: { role: true }
-        });
-        
-        if (userDetails && userDetails.role !== token.role) {
-          token.role = userDetails.role;
-        }
+      // Handle token updates
+      if (trigger === "update" && session) {
+        token.accessToken = session.accessToken;
+        token.refreshToken = session.refreshToken;
       }
 
       return token;
     },
-    async session({ session, token }) {
+    async session({ session, token, trigger }) {
       if (token) {
-        session.user.id = token.id;
-        session.user.role = token.role;
+        session.user.id = token.id as string;
+        session.user.role = token.role as Role;
+        session.accessToken = token.accessToken;
+        session.refreshToken = token.refreshToken;
       }
+
+      // Handle session updates
+      if (trigger === "update") {
+        session.accessToken = token.accessToken;
+        session.refreshToken = token.refreshToken;
+      }
+
       return session;
-    },
-    async signIn({ user, account, profile }) {
-      // For social sign-ins, we need to check if this is a first-time login
-      if (account?.provider === 'google' || account?.provider === 'facebook') {
-        try {
-          const existingUser = await prisma.user.findUnique({
-            where: { email: user.email },
-          });
-          
-          if (existingUser) {
-            // Update the last login timestamp
-            await prisma.user.update({
-              where: { id: existingUser.id },
-              data: { lastLoginAt: new Date() }
-            });
-            
-            // Log social sign-in
-            await prisma.securityLog.create({
-              data: {
-                userId: existingUser.id,
-                action: 'SOCIAL_LOGIN',
-                ipAddress: null, // Would be populated in actual request
-                userAgent: null,
-                // Store metadata as stringified JSON
-                metadata: JSON.stringify({
-                  provider: account.provider,
-                  timestamp: new Date().toISOString()
-                })
-              }
-            });
-          } else {
-            // This is a new user, we'll create them with the default role
-            // The actual user creation is handled by the NextAuth adapter
-            // We're just adding additional tracking here
-            
-            // Note: At this point, user.id might be the provider's ID, not our database ID
-            // So we need to find the newly created user
-            const newUser = await prisma.user.findUnique({
-              where: { email: user.email },
-            });
-            
-            if (newUser) {
-              // Log new user creation via social login
-              await prisma.securityLog.create({
-                data: {
-                  userId: newUser.id,
-                  action: 'SOCIAL_SIGNUP',
-                  ipAddress: null,
-                  userAgent: null,
-                  // Store metadata as stringified JSON
-                  metadata: JSON.stringify({
-                    provider: account.provider,
-                    timestamp: new Date().toISOString()
-                  })
-                }
-              });
-            }
-          }
-        } catch (error) {
-          console.error("Error during social sign-in:", error);
-          // Continue with sign-in, but log the error
-        }
-      }
-      
-      return true;
     }
   },
   pages: {
-    signIn: "/auth/signin",
+    signIn: "/auth/login",
     signOut: "/auth/signout",
     error: "/auth/error",
     verifyRequest: "/auth/verify-request",
   },
   secret: process.env.NEXTAUTH_SECRET,
   debug: process.env.NODE_ENV === "development",
-};
-
-declare module "next-auth" {
-  interface User {
-    id: string;
-    email: string;
-    name: string;
-    role: Role;
-  }
-
-  interface Session {
-    user: {
-      id: string;
-      email: string;
-      name: string;
-      role: Role;
-    };
-  }
-}
-
-declare module "next-auth/jwt" {
-  interface JWT {
-    id: string;
-    role: Role;
-  }
-} 
+}; 

@@ -153,40 +153,55 @@ export const deleteMessage = catchAsync(async (req: AuthenticatedRequest, res: R
 export const getConversations = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.user.id;
 
-  // Using Prisma's raw query capabilities for complex query
-  const conversations = await prisma.$queryRaw`
-    SELECT DISTINCT 
-      CASE 
-        WHEN m."senderId" = ${userId} THEN m."recipientId" 
-        ELSE m."senderId" 
-      END as "participantId",
-      u.username as "participantName",
-      u.email as "participantEmail",
-      (
-        SELECT m2.content 
-        FROM "Message" m2 
-        WHERE (m2."senderId" = ${userId} AND m2."recipientId" = "participantId") 
-           OR (m2."senderId" = "participantId" AND m2."recipientId" = ${userId}) 
-        ORDER BY m2."createdAt" DESC 
-        LIMIT 1
-      ) as "lastMessage",
-      (
-        SELECT m2."createdAt" 
-        FROM "Message" m2 
-        WHERE (m2."senderId" = ${userId} AND m2."recipientId" = "participantId") 
-           OR (m2."senderId" = "participantId" AND m2."recipientId" = ${userId}) 
-        ORDER BY m2."createdAt" DESC 
-        LIMIT 1
-      ) as "lastMessageAt"
-    FROM "Message" m
-    INNER JOIN "User" u ON u.id = 
-      CASE 
-        WHEN m."senderId" = ${userId} THEN m."recipientId" 
-        ELSE m."senderId" 
-      END
-    WHERE m."senderId" = ${userId} OR m."recipientId" = ${userId}
-    ORDER BY "lastMessageAt" DESC
-  `;
+  // Get all messages for the current user
+  const messages = await prisma.message.findMany({
+    where: {
+      OR: [
+        { senderId: userId },
+        { recipientId: userId }
+      ]
+    },
+    include: {
+      sender: {
+        select: {
+          id: true,
+          username: true,
+          email: true
+        }
+      },
+      recipient: {
+        select: {
+          id: true,
+          username: true,
+          email: true
+        }
+      }
+    },
+    orderBy: {
+      createdAt: 'desc'
+    }
+  });
+
+  // Group messages by conversation
+  const conversations = messages.reduce((acc: any[], message) => {
+    const participantId = message.senderId === userId ? message.recipientId : message.senderId;
+    const participant = message.senderId === userId ? message.recipient : message.sender;
+
+    // Check if conversation already exists
+    const existingConversation = acc.find(c => c.participantId === participantId);
+    
+    if (!existingConversation) {
+      acc.push({
+        participantId,
+        participantName: participant.username,
+        participantEmail: participant.email,
+        lastMessage: message.content,
+        lastMessageAt: message.createdAt
+      });
+    }
+
+    return acc;
+  }, []);
 
   res.status(200).json({
     status: 'success',

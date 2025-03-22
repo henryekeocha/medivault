@@ -1,34 +1,54 @@
-import { CognitoIdentityProviderClient, ListIdentityProvidersCommand, UpdateIdentityProviderCommand, CreateIdentityProviderCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { cognitoConfig } from './cognito-config.js';
 import { logger } from '../../utils/logger.js';
 /**
- * Service for managing social identity providers in Cognito
+ * Service for managing NextAuth OAuth providers
+ * (Replacement for the previous Cognito-based social identity provider)
  */
 export class SocialIdentityProviderService {
-    client;
-    userPoolId;
+    // Configuration
+    googleClientId;
+    googleClientSecret;
+    facebookAppId;
+    facebookAppSecret;
+    nextAuthUrl;
     constructor() {
-        // Initialize the Cognito client
-        this.client = new CognitoIdentityProviderClient({
-            region: process.env.AWS_REGION || 'us-east-1',
-        });
-        // Set the User Pool ID from environment variables
-        this.userPoolId = process.env.COGNITO_USER_POOL_ID || cognitoConfig.userPoolId;
-        if (!this.userPoolId) {
-            logger.warn('Cognito User Pool ID not set');
+        // Initialize from environment variables
+        this.googleClientId = process.env.GOOGLE_CLIENT_ID || '';
+        this.googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+        this.facebookAppId = process.env.FACEBOOK_CLIENT_ID || '';
+        this.facebookAppSecret = process.env.FACEBOOK_CLIENT_SECRET || '';
+        this.nextAuthUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+        console.log(`Initializing Social Identity Provider service with NextAuth providers:
+      Google Client ID: ${this.googleClientId ? this.googleClientId.substring(0, 5) + '...' : 'Not set'}
+      Facebook App ID: ${this.facebookAppId ? this.facebookAppId.substring(0, 5) + '...' : 'Not set'}
+      NextAuth URL: ${this.nextAuthUrl}
+    `);
+        if (!this.googleClientId || !this.googleClientSecret) {
+            console.warn('Google OAuth credentials not set for Social Identity Provider service');
+        }
+        if (!this.facebookAppId || !this.facebookAppSecret) {
+            console.warn('Facebook OAuth credentials not set for Social Identity Provider service');
         }
     }
     /**
      * Get list of configured identity providers
-     * @returns List of identity providers
+     * @returns List of configured providers
      */
     async listIdentityProviders() {
         try {
-            const command = new ListIdentityProvidersCommand({
-                UserPoolId: this.userPoolId,
-            });
-            const response = await this.client.send(command);
-            return response.Providers || [];
+            const providers = [];
+            if (this.googleClientId && this.googleClientSecret) {
+                providers.push({
+                    name: 'Google',
+                    enabled: true
+                });
+            }
+            if (this.facebookAppId && this.facebookAppSecret) {
+                providers.push({
+                    name: 'Facebook',
+                    enabled: true
+                });
+            }
+            return providers;
         }
         catch (error) {
             logger.error('Error listing identity providers:', error);
@@ -41,56 +61,28 @@ export class SocialIdentityProviderService {
      * @returns Whether the provider is configured
      */
     async isProviderConfigured(providerName) {
-        const providers = await this.listIdentityProviders();
-        return providers.some((provider) => provider.ProviderName === providerName);
+        if (providerName === 'Google') {
+            return !!(this.googleClientId && this.googleClientSecret);
+        }
+        else if (providerName === 'Facebook') {
+            return !!(this.facebookAppId && this.facebookAppSecret);
+        }
+        return false;
     }
     /**
      * Configure Google as an identity provider
      * @param clientId Google OAuth client ID
      * @param clientSecret Google OAuth client secret
-     * @returns Result of the operation
+     * @returns Success status
      */
     async configureGoogleProvider(clientId, clientSecret) {
         try {
-            const isConfigured = await this.isProviderConfigured('Google');
-            const providerDetails = {
-                client_id: clientId,
-                client_secret: clientSecret,
-                authorize_scopes: 'email profile openid',
-            };
-            if (isConfigured) {
-                // Update existing provider
-                const command = new UpdateIdentityProviderCommand({
-                    UserPoolId: this.userPoolId,
-                    ProviderName: 'Google',
-                    ProviderDetails: providerDetails,
-                    AttributeMapping: {
-                        email: 'email',
-                        name: 'name',
-                        given_name: 'given_name',
-                        family_name: 'family_name',
-                        picture: 'picture',
-                    },
-                });
-                return await this.client.send(command);
-            }
-            else {
-                // Create new provider
-                const command = new CreateIdentityProviderCommand({
-                    UserPoolId: this.userPoolId,
-                    ProviderName: 'Google',
-                    ProviderType: 'Google',
-                    ProviderDetails: providerDetails,
-                    AttributeMapping: {
-                        email: 'email',
-                        name: 'name',
-                        given_name: 'given_name',
-                        family_name: 'family_name',
-                        picture: 'picture',
-                    },
-                });
-                return await this.client.send(command);
-            }
+            // With NextAuth, we store these in environment variables
+            // This would typically update environment variables or database settings
+            this.googleClientId = clientId;
+            this.googleClientSecret = clientSecret;
+            logger.info('Google OAuth provider configured');
+            return { success: true, message: 'Google provider configured' };
         }
         catch (error) {
             logger.error('Error configuring Google provider:', error);
@@ -101,45 +93,16 @@ export class SocialIdentityProviderService {
      * Configure Facebook as an identity provider
      * @param appId Facebook App ID
      * @param appSecret Facebook App Secret
-     * @returns Result of the operation
+     * @returns Success status
      */
     async configureFacebookProvider(appId, appSecret) {
         try {
-            const isConfigured = await this.isProviderConfigured('Facebook');
-            const providerDetails = {
-                client_id: appId,
-                client_secret: appSecret,
-                authorize_scopes: 'email,public_profile',
-            };
-            if (isConfigured) {
-                // Update existing provider
-                const command = new UpdateIdentityProviderCommand({
-                    UserPoolId: this.userPoolId,
-                    ProviderName: 'Facebook',
-                    ProviderDetails: providerDetails,
-                    AttributeMapping: {
-                        email: 'email',
-                        name: 'name',
-                        picture: 'picture',
-                    },
-                });
-                return await this.client.send(command);
-            }
-            else {
-                // Create new provider
-                const command = new CreateIdentityProviderCommand({
-                    UserPoolId: this.userPoolId,
-                    ProviderName: 'Facebook',
-                    ProviderType: 'Facebook',
-                    ProviderDetails: providerDetails,
-                    AttributeMapping: {
-                        email: 'email',
-                        name: 'name',
-                        picture: 'picture',
-                    },
-                });
-                return await this.client.send(command);
-            }
+            // With NextAuth, we store these in environment variables
+            // This would typically update environment variables or database settings
+            this.facebookAppId = appId;
+            this.facebookAppSecret = appSecret;
+            logger.info('Facebook OAuth provider configured');
+            return { success: true, message: 'Facebook provider configured' };
         }
         catch (error) {
             logger.error('Error configuring Facebook provider:', error);
@@ -152,12 +115,9 @@ export class SocialIdentityProviderService {
      * @returns The authorization URL
      */
     getAuthorizationUrl(provider) {
-        const domain = cognitoConfig.oauth.domain;
-        const clientId = cognitoConfig.clientId;
-        const redirectUri = encodeURIComponent(cognitoConfig.oauth.redirectSignIn);
-        const responseType = cognitoConfig.oauth.responseType;
-        const scope = encodeURIComponent(cognitoConfig.oauth.scope.join(' '));
-        return `https://${domain}/oauth2/authorize?identity_provider=${provider}&client_id=${clientId}&response_type=${responseType}&scope=${scope}&redirect_uri=${redirectUri}`;
+        // With NextAuth.js, the authorization URL is handled internally by NextAuth
+        // This is just a compatibility function that returns the sign-in URL with the right provider
+        return `${this.nextAuthUrl}/api/auth/signin/${provider.toLowerCase()}`;
     }
 }
 export default new SocialIdentityProviderService();

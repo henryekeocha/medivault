@@ -1,0 +1,30 @@
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy package.json files
+COPY package*.json ./
+COPY backend/package*.json ./backend/
+COPY medical-image-sharing/package*.json ./medical-image-sharing/
+
+# Copy application code
+COPY . .
+
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
+# Create README explaining the containerization approach
+RUN echo "# Medical Image Sharing Platform - Docker\n\nThis container includes both the frontend and backend applications.\n\n## Building the Container\n\n\`\`\`bash\ndocker build -t medical-image-sharing:latest -f Dockerfile.simple .\n\`\`\`\n\n## Running the Container\n\n\`\`\`bash\ndocker run -p 3002:3000 -p 3005:3001 medical-image-sharing:latest\n\`\`\`\n\n## Container Structure\n\n- Frontend application is in /app/medical-image-sharing\n- Backend application is in /app/backend\n- PostgreSQL would need to be provided externally\n\n## Notes\n\nThis simplified container is for demonstration purposes only and should be replaced with the proper Docker Compose setup for production." > /app/DOCKER_README.md
+
+# Create a simple startup script for demonstration
+RUN printf '#!/bin/sh\necho "Medical Image Sharing Platform Demo Container"\necho "Frontend code is in /app/medical-image-sharing"\necho "Backend code is in /app/backend"\necho "For a real deployment, please use the proper Docker Compose setup"\necho "Details in DOCKER_README.md"\ntail -f /dev/null\n' > /app/startup.sh && chmod +x /app/startup.sh
+
+# Set environment variables
+ENV NODE_ENV=production
+
+# Expose ports
+EXPOSE 3000 3001
+
+# Start the application
+CMD ["/app/startup.sh"] 

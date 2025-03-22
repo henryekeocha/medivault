@@ -5,6 +5,8 @@
  * It helps in verifying that login, register, and logout functionality work properly.
  */
 
+import { getSession } from 'next-auth/react';
+
 // Debug mode flag - set to true to enable verbose logging
 let isDebugMode = process.env.NODE_ENV === 'development';
 
@@ -46,25 +48,24 @@ export const logToken = (token: string | null, label = 'Token') => {
 };
 
 /**
- * Verify authentication state in localStorage
+ * Verify authentication state in NextAuth session
  */
-export const verifyAuthState = () => {
+export const verifyAuthState = async () => {
   if (!isDebugMode) return null;
   
-  // Check localStorage for tokens
-  const token = localStorage.getItem('token');
-  const refreshToken = localStorage.getItem('refreshToken');
+  // Check NextAuth session
+  const session = await getSession();
+  const hasToken = !!session?.accessToken;
   
   console.group('[Auth Debug] Auth State Verification');
-  logToken(token, 'Access Token');
-  logToken(refreshToken, 'Refresh Token');
-  console.log(`[Auth Debug] Is Authenticated: ${!!token}`);
+  logToken(session?.accessToken || null, 'Access Token');
+  console.log(`[Auth Debug] Is Authenticated: ${!!session?.user}`);
   console.groupEnd();
   
   return {
-    hasToken: !!token,
-    hasRefreshToken: !!refreshToken,
-    isAuthenticated: !!token
+    hasToken,
+    hasRefreshToken: false, // NextAuth handles refresh tokens internally
+    isAuthenticated: !!session?.user
   };
 };
 
@@ -125,11 +126,9 @@ export const trackLogoutFlow = (step: string, data?: any) => {
  * Clear all auth-related storage
  */
 export const clearAuthStorage = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('refreshToken');
-  
+  // NextAuth handles this via signOut
   if (isDebugMode) {
-    console.log('[Auth Debug] Auth storage cleared');
+    console.log('[Auth Debug] Auth storage management is now handled by NextAuth');
   }
   
   return true;

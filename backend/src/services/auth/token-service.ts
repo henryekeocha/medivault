@@ -1,11 +1,11 @@
 import { sign, verify, JwtPayload, SignOptions } from 'jsonwebtoken';
 import { prisma } from '../../lib/prisma.js';
-import { UserRole } from './auth-options.js';
+import { Role } from '@prisma/client';
 
 interface TokenUser {
   id: string;
   email: string;
-  role: string;
+  role: Role;
 }
 
 interface RefreshTokenPayload extends JwtPayload {
@@ -51,11 +51,11 @@ export class TokenService {
     const payload: AccessTokenPayload = {
       id: user.id,
       email: user.email,
-      role: user.role
+      role: user.role.toString()
     };
 
     const options: SignOptions = {
-      expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m'
+      expiresIn: (process.env.JWT_ACCESS_EXPIRY || '15m') as any
     };
 
     return sign(payload, this.accessTokenSecret, options);
@@ -70,11 +70,11 @@ export class TokenService {
     const payload: RefreshTokenPayload = {
       id: user.id,
       email: user.email,
-      role: user.role
+      role: user.role.toString()
     };
 
     const options: SignOptions = {
-      expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d'
+      expiresIn: (process.env.JWT_REFRESH_EXPIRY || '7d') as any
     };
 
     return sign(payload, this.refreshTokenSecret, options);

@@ -41,6 +41,7 @@ import {
 import { formatDistanceToNow, format } from 'date-fns';
 import { ApiClient } from '@/lib/api/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 
 // Mapping for appointment status display
 const statusMap: Record<string, { label: string; color: 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' }> = {
@@ -98,6 +99,7 @@ export default function AppointmentList({
   statusFilter = '',
 }: AppointmentListProps) {
   const { user } = useAuth();
+  const toast = useToast();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -143,7 +145,7 @@ export default function AppointmentList({
       if (userRole === 'PATIENT') {
         response = await apiClient.getPatientAppointments(user.id, params);
       } else if (userRole === 'PROVIDER') {
-        response = await apiClient.getDoctorAppointments(user.id, params);
+        response = await apiClient.getProviderAppointments(user.id, params);
       } else {
         response = await apiClient.getAppointments(params);
       }
@@ -176,16 +178,7 @@ export default function AppointmentList({
         : 'Failed to load appointments. Please try again.';
       
       setError(errorMessage);
-      
-      // Show toast notification for errors
-      try {
-        // Access toast if available
-        const { toast } = require('@/components/Toast');
-        toast.showError(errorMessage);
-      } catch (e) {
-        // Fall back to console if toast is not available
-        console.warn('Toast not available:', e);
-      }
+      toast.showError(errorMessage);
       
       // Initialize with empty data
       setAppointments([]);
@@ -272,14 +265,7 @@ export default function AppointmentList({
       const response = await apiClient.deleteAppointment(appointmentToDelete);
       
       if (response.status === 'success') {
-        // Show success toast
-        try {
-          const { toast } = require('@/components/Toast');
-          toast.showSuccess('Appointment cancelled successfully');
-        } catch (e) {
-          console.warn('Toast not available:', e);
-        }
-        
+        toast.showSuccess('Appointment cancelled successfully');
         // Refresh appointments after deletion
         fetchAppointments();
       } else {
@@ -292,14 +278,7 @@ export default function AppointmentList({
         : 'Failed to cancel appointment. Please try again.';
       
       setError(errorMessage);
-      
-      // Show toast notification
-      try {
-        const { toast } = require('@/components/Toast');
-        toast.showError(errorMessage);
-      } catch (e) {
-        console.warn('Toast not available:', e);
-      }
+      toast.showError(errorMessage);
     } finally {
       setLoading(false);
       setDeleteDialogOpen(false);

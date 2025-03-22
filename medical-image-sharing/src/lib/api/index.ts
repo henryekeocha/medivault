@@ -1,4 +1,6 @@
-import axios from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
+import { ApiError, ApiResponse } from './types';
+import { getSession } from 'next-auth/react';
 
 // Define our own AxiosProgressEvent type since it's not exported from axios
 interface AxiosProgressEvent {
@@ -11,7 +13,7 @@ interface AxiosProgressEvent {
   upload?: boolean;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:3001/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -22,10 +24,11 @@ const api = axios.create({
 
 // Request interceptor for adding auth token
 api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+  async (config) => {
+    // Get session from NextAuth
+    const session = await getSession();
+    if (session?.accessToken) {
+      config.headers.Authorization = `Bearer ${session.accessToken}`;
     }
     return config;
   },
@@ -39,8 +42,9 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      // NextAuth will handle redirecting to login
+      // We don't need to manage localStorage here anymore
+      window.location.href = '/auth/login';
     }
     return Promise.reject(error);
   }

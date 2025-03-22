@@ -37,7 +37,7 @@ import { format } from 'date-fns';
 import { apiClient } from '@/lib/api/client';
 import { Message } from '@/lib/api/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState'; 
 

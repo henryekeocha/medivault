@@ -77,14 +77,13 @@ export class ImageService {
     const dicomMetadata: Partial<Image> = {
       ...metadata,
       fileType: DICOM_CONTENT_TYPE,
-      // The fileExtension field is handled in the backend based on the Prisma schema
-      // Store DICOM-specific information in the metadata
-      metadata: {
-        ...(metadata.metadata || {}),
+      // Parse existing metadata if it's a string, or use empty object if null
+      metadata: JSON.stringify({
+        ...(metadata.metadata ? JSON.parse(metadata.metadata) : {}),
         isDicom: true,
         dicomVersion: '3.0',
         fileExtension: DICOM_EXTENSION
-      },
+      })
     };
     
     return this.client.uploadImage(fileToUpload, dicomMetadata, onProgress);

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { protect } from '../../middleware/auth.js';
-import cognitoMfaService from '../../services/aws/cognito-mfa-service.js';
+import mfaService from '../../services/auth/mfa-service.js';
 import { logger } from '../../utils/logger.js';
 const router = Router();
 // All routes require authentication
@@ -18,140 +18,86 @@ router.post('/totp/setup', async (req, res) => {
                 message: 'Access token is required'
             });
         }
-        const secretCode = await cognitoMfaService.associateSoftwareToken(accessToken);
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const secretCode = await mfaService.generateTotpSecret(userId);
         return res.status(200).json({
             success: true,
-            secretCode
+            secretCode,
         });
     }
     catch (error) {
-        logger.error('Error setting up TOTP:', error);
+        logger.error('Error setting up TOTP MFA:', error);
         return res.status(500).json({
             success: false,
-            message: 'An error occurred while setting up TOTP'
+            message: 'An error occurred while setting up TOTP MFA'
         });
     }
 });
 /**
- * Verify TOTP setup
+ * Verify a TOTP token
  * POST /auth/mfa/totp/verify
  */
 router.post('/totp/verify', async (req, res) => {
     try {
-        const { code, deviceName } = req.body;
-        const accessToken = req.headers.authorization?.replace('Bearer ', '');
-        const username = req.user?.username;
-        if (!accessToken) {
-            return res.status(401).json({
-                success: false,
-                message: 'Access token is required'
-            });
-        }
-        if (!code) {
+        const { token } = req.body;
+        const userId = req.user?.id;
+        if (!token) {
             return res.status(400).json({
                 success: false,
-                message: 'Verification code is required'
+                message: 'Token is required'
             });
         }
-        const status = await cognitoMfaService.verifySoftwareToken(accessToken, code, deviceName);
-        if (status === 'SUCCESS' && username) {
-            // Set TOTP as the preferred MFA method
-            await cognitoMfaService.setTotpPreferred(username, accessToken);
-        }
-        return res.status(200).json({
-            success: status === 'SUCCESS',
-            status
-        });
-    }
-    catch (error) {
-        logger.error('Error verifying TOTP:', error);
-        return res.status(500).json({
-            success: false,
-            message: 'An error occurred while verifying TOTP'
-        });
-    }
-});
-/**
- * Set SMS as preferred MFA method
- * POST /auth/mfa/sms/verify
- */
-router.post('/sms/verify', async (req, res) => {
-    try {
-        const accessToken = req.headers.authorization?.replace('Bearer ', '');
-        const username = req.user?.username;
-        if (!accessToken || !username) {
+        if (!userId) {
             return res.status(401).json({
                 success: false,
-                message: 'Authentication required'
+                message: 'User not found'
             });
         }
-        await cognitoMfaService.setSmsPreferred(username, accessToken);
-        return res.status(200).json({
-            success: true,
-            message: 'SMS MFA has been set as your preferred method'
-        });
-    }
-    catch (error) {
-        logger.error('Error setting SMS as preferred MFA method:', error);
-        return res.status(500).json({
-            success: false,
-            message: 'An error occurred while setting SMS as your preferred MFA method'
-        });
-    }
-});
-/**
- * Set preferred MFA method
- * PUT /auth/mfa/preferred
- */
-router.put('/preferred', async (req, res) => {
-    try {
-        const { method } = req.body;
-        const accessToken = req.headers.authorization?.replace('Bearer ', '');
-        const username = req.user?.username;
-        if (!accessToken || !username) {
-            return res.status(401).json({
-                success: false,
-                message: 'Authentication required'
-            });
-        }
-        if (!method || !['TOTP', 'SMS', 'NONE'].includes(method)) {
+        const isValid = await mfaService.verifyTotpToken(userId, token);
+        if (!isValid) {
             return res.status(400).json({
                 success: false,
-                message: 'Valid method is required (TOTP, SMS, or NONE)'
+                message: 'Invalid token'
             });
         }
-        await cognitoMfaService.setPreferredMfaMethod(username, method, accessToken);
+        // Enable MFA for the user
+        await mfaService.enableMfa(userId);
         return res.status(200).json({
             success: true,
-            message: `MFA method set to ${method}`
+            message: 'TOTP MFA verified and enabled'
         });
     }
     catch (error) {
-        logger.error('Error setting preferred MFA method:', error);
+        logger.error('Error verifying TOTP token:', error);
         return res.status(500).json({
             success: false,
-            message: 'An error occurred while setting your preferred MFA method'
+            message: 'An error occurred while verifying TOTP token'
         });
     }
 });
 /**
  * Disable MFA
- * PUT /auth/mfa/disable
+ * POST /auth/mfa/disable
  */
-router.put('/disable', async (req, res) => {
+router.post('/disable', async (req, res) => {
     try {
-        const accessToken = req.headers.authorization?.replace('Bearer ', '');
-        const username = req.user?.username;
-        if (!accessToken || !username) {
+        const userId = req.user?.id;
+        if (!userId) {
             return res.status(401).json({
                 success: false,
-                message: 'Authentication required'
+                message: 'User not found'
             });
         }
-        await cognitoMfaService.disableMfa(username, accessToken);
+        await mfaService.disableMfa(userId);
         return res.status(200).json({
             success: true,
-            message: 'MFA has been disabled'
+            message: 'MFA disabled successfully'
         });
     }
     catch (error) {
@@ -159,6 +105,33 @@ router.put('/disable', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'An error occurred while disabling MFA'
+        });
+    }
+});
+/**
+ * Get MFA status
+ * GET /auth/mfa/status
+ */
+router.get('/status', async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const status = await mfaService.getMfaStatus(userId);
+        return res.status(200).json({
+            success: true,
+            data: status
+        });
+    }
+    catch (error) {
+        logger.error('Error getting MFA status:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'An error occurred while getting MFA status'
         });
     }
 });

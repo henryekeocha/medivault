@@ -91,27 +91,69 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       }
 
       const response = await apiClient.getNotifications();
-      if (response && response.data) {
+      
+      // Check if we have valid data before processing
+      if (response && response.status === 'success' && Array.isArray(response.data)) {
         const mappedNotifications = response.data.map(mapNotification);
         setNotifications(mappedNotifications);
+      } else if (response.status === 'error') {
+        // If there's an error, log it only once (not on every retry)
+        console.warn('Notifications API error:', response.error?.message || 'Unknown error');
       }
     } catch (error) {
-      console.error('Failed to fetch notifications:', error);
+      // Log the error, but don't spam the console on every retry
+      if (error instanceof Error && error.message !== 'Failed to fetch notifications') {
+        console.error('Failed to fetch notifications:', error);
+      }
     }
   }, [isAuthenticated]);
 
   // Fetch notifications when the component mounts and when auth state changes
   useEffect(() => {
-    fetchNotifications();
-
-    // Set up polling for new notifications every 30 seconds
-    const interval = setInterval(() => {
-      if (isAuthenticated) {
-        fetchNotifications();
+    let ignorePolling = false;
+    let failedAttempts = 0;
+    const MAX_FAILED_ATTEMPTS = 3;
+    const MAX_ERROR_LOG_COUNT = 2; // Only log errors twice to avoid spam
+    let errorLogCount = 0;
+    
+    const fetchAndHandleErrors = async () => {
+      try {
+        await fetchNotifications();
+        // Reset failed attempts counter on success
+        failedAttempts = 0;
+        errorLogCount = 0; // Reset error log count on success
+      } catch (error) {
+        failedAttempts++;
+        // Only log a limited number of errors to avoid spamming the console
+        if (errorLogCount < MAX_ERROR_LOG_COUNT) {
+          console.warn(`Notification fetch error (attempt ${failedAttempts}):`, error);
+          errorLogCount++;
+          if (errorLogCount === MAX_ERROR_LOG_COUNT) {
+            console.warn('Suppressing further notification fetch error logs');
+          }
+        }
+        
+        if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+          console.warn('Notification polling temporarily paused after multiple failures');
+          // We'll retry after a longer delay with the next interval
+        }
       }
-    }, 30000);
+    };
+    
+    // Initial fetch
+    fetchAndHandleErrors();
 
-    return () => clearInterval(interval);
+    // Set up polling with exponential backoff for failures
+    const interval = setInterval(() => {
+      if (isAuthenticated && !ignorePolling) {
+        fetchAndHandleErrors();
+      }
+    }, failedAttempts >= MAX_FAILED_ATTEMPTS ? 120000 : 30000); // 2 min backoff vs 30 sec normal
+
+    return () => {
+      ignorePolling = true;
+      clearInterval(interval);
+    };
   }, [fetchNotifications, isAuthenticated]);
 
   const addNotification = (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {

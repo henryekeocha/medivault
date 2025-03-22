@@ -1,5 +1,4 @@
 import express, { RequestHandler } from 'express';
-import { protect } from '../middleware/auth.js';
 import {
   getHealthMetrics,
   getHealthMetric,
@@ -7,25 +6,18 @@ import {
   updateHealthMetric,
   deleteHealthMetric
 } from '../controllers/health-metric.controller.js';
+import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Protect all health metric routes
+// Apply authentication middleware to all routes
 router.use(protect as RequestHandler);
 
-// Get all health metrics for the authenticated user
-router.get('/', getHealthMetrics as RequestHandler);
-
-// Create a new health metric
-router.post('/', createHealthMetric as RequestHandler);
-
-// Get a specific health metric
-router.get('/:id', getHealthMetric as RequestHandler);
-
-// Update a health metric
-router.put('/:id', updateHealthMetric as RequestHandler);
-
-// Delete a health metric
-router.delete('/:id', deleteHealthMetric as RequestHandler);
+// Patient health metrics routes
+router.get('/api/v1/patient/:patientId/health-metrics', getHealthMetrics as RequestHandler);
+router.get('/api/v1/patient/:patientId/health-metrics/:metricId', getHealthMetric as RequestHandler);
+router.post('/api/v1/patient/health-metrics', createHealthMetric as RequestHandler);
+router.put('/api/v1/patient/:patientId/health-metrics/:metricId', updateHealthMetric as RequestHandler);
+router.delete('/api/v1/patient/:patientId/health-metrics/:metricId', deleteHealthMetric as RequestHandler);
 
 export default router;  

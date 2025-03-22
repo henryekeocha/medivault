@@ -10,6 +10,7 @@ import morgan from 'morgan';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { errorHandler } from './middleware/errorHandler.js';
+import { bypassAuth } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import imageRoutes from './routes/images.js';
@@ -49,7 +50,21 @@ app.use(helmet({
 }));
 // CORS configuration
 const corsOptions = {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: function (origin, callback) {
+        const allowedOrigins = [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://[::1]:3000'
+        ];
+        // Allow requests with no origin (like mobile apps, curl requests, etc.)
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        }
+        else {
+            console.warn(`CORS blocked request from origin: ${origin}`);
+            callback(null, false);
+        }
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
     credentials: true,
@@ -87,9 +102,36 @@ else {
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+// Simple diagnostic endpoint for debugging
+app.get('/api/test', (req, res) => {
+    res.json({
+        message: 'Test endpoint is working',
+        timestamp: new Date().toISOString(),
+        env: {
+            CORS_ORIGIN: process.env.CORS_ORIGIN,
+            NODE_ENV: process.env.NODE_ENV,
+            PORT: process.env.PORT,
+            AWS_REGION: process.env.AWS_REGION
+        }
+    });
+});
+// Basic POST endpoint test
+app.post('/api/test-auth', (req, res) => {
+    console.log('Test auth endpoint hit with body:', req.body);
+    res.json({
+        success: true,
+        message: 'Test auth endpoint working',
+        receivedData: {
+            email: req.body?.email || 'not provided',
+            passwordProvided: req.body?.password ? true : false
+        }
+    });
+});
 // API Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-// API routes
+// Apply bypassAuth to all routes - it will either bypass auth for public routes or apply the protect middleware
+app.use(bypassAuth);
+// Regular routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/images', imageRoutes);

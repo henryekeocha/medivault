@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "darwin-arm64", "linux-musl-arm64-openssl-1.1.x"]
 }
 
 datasource db {
@@ -50,6 +51,8 @@ model User {
   systemLogs            SystemLog[]
   activities            UserActivity[]
   settings              UserSettings?
+  userDevices           UserDevice[]
+  authEvents            AuthEvent[]
 
   @@index([email])
   @@index([username])
@@ -452,6 +455,40 @@ model ProviderVerification {
   @@index([licenseNumber])
   @@index([providerId])
   @@index([verificationStatus])
+}
+
+model UserDevice {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId      String    @db.Uuid
+  deviceName  String
+  deviceType  String?
+  browser     String?
+  os          String?
+  remembered  Boolean   @default(false)
+  lastUsedAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([lastUsedAt])
+}
+
+model AuthEvent {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId      String    @db.Uuid
+  eventType   String
+  ipAddress   String
+  deviceName  String?
+  browser     String?
+  os          String?
+  success     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([eventType])
 }
 
 enum Role {

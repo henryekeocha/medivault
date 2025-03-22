@@ -81,12 +81,25 @@ export const TwoFactorForm: React.FC<TwoFactorFormProps> = ({
 
   return (
     <Paper elevation={3} sx={{ p: 4, width: '100%', maxWidth: 400, mx: 'auto' }}>
-      <Box component="form" onSubmit={handleSubmit}>
-        <Typography variant="h5" component="h1" gutterBottom textAlign="center">
+      <Box 
+        component="form" 
+        onSubmit={handleSubmit}
+        role="dialog"
+        aria-labelledby="two-factor-dialog-title"
+        aria-describedby="two-factor-dialog-description"
+      >
+        <Typography 
+          id="two-factor-dialog-title"
+          variant="h5" 
+          component="h1" 
+          gutterBottom 
+          textAlign="center"
+        >
           Two-Factor Authentication
         </Typography>
 
         <Typography
+          id="two-factor-dialog-description"
           variant="body2"
           color="text.secondary"
           paragraph
@@ -109,6 +122,7 @@ export const TwoFactorForm: React.FC<TwoFactorFormProps> = ({
                 Dismiss
               </Button>
             }
+            role="alert"
           >
             {error}
           </Alert>
@@ -125,6 +139,7 @@ export const TwoFactorForm: React.FC<TwoFactorFormProps> = ({
             maxLength: 6,
             inputMode: 'numeric',
             pattern: '[0-9]*',
+            'aria-label': 'Verification code input'
           }}
           error={!!error}
           disabled={loading}

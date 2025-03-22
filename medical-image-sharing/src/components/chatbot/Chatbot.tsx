@@ -26,7 +26,7 @@ import {
 } from '@mui/icons-material';
 import { apiClient } from '@/lib/api/client';
 import { ChatMessage as ApiChatMessage, ChatSession } from '@/lib/api/types';
-import { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState'; 
 

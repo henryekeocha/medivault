@@ -1,6 +1,32 @@
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../utils/appError.js';
+/**
+ * Middleware to determine if the current request should bypass authentication
+ * Especially useful for public routes like sign-in
+ */
+export const bypassAuth = (req, res, next) => {
+    // Define an array of routes that should bypass authentication
+    const publicRoutes = [
+        '/api/auth/signin',
+        '/api/auth/login',
+        '/api/auth/callback',
+        '/api/auth/refresh-token',
+        '/api/auth/signout',
+        '/api/auth/logout'
+    ];
+    // Check if the current path matches any public route
+    const shouldBypass = publicRoutes.some(route => req.path === route ||
+        req.originalUrl === route ||
+        req.url === route ||
+        req.originalUrl.includes(route));
+    if (shouldBypass) {
+        console.log(`Bypassing auth for public route: ${req.originalUrl}`);
+        return next();
+    }
+    // If not a public route, apply the protect middleware
+    return protect(req, res, next);
+};
 export const protect = async (req, res, next) => {
     try {
         // 1) Get token and check if it exists
@@ -13,55 +39,61 @@ export const protect = async (req, res, next) => {
             return next(new AppError('You are not logged in! Please log in to get access.', 401));
         }
         // 2) Verify token
-        const secret = process.env.JWT_SECRET;
-        if (!secret) {
-            console.error('JWT_SECRET is not defined in environment variables');
-            throw new Error('JWT_SECRET is not defined');
+        // First try JWT_SECRET (for our custom tokens)
+        const jwtSecret = process.env.JWT_SECRET || '';
+        const nextAuthSecret = process.env.NEXTAUTH_SECRET || '';
+        if (!jwtSecret && !nextAuthSecret) {
+            console.error('No JWT secrets defined in environment variables');
+            throw new Error('No JWT secret defined (JWT_SECRET or NEXTAUTH_SECRET)');
         }
+        const secret = jwtSecret || nextAuthSecret;
         try {
             const decoded = jwt.verify(token, secret);
-            // Get user ID from either 'id' or 'sub' claim for backward compatibility
+            // Get user ID from either 'id' or 'sub' claim for compatibility with both systems
             const userId = decoded.sub || decoded.id;
             if (!userId) {
                 console.error('JWT does not contain user ID in either id or sub claim');
                 return next(new AppError('Invalid token format. Please log in again.', 401));
             }
             // 3) Check if user still exists
-            const currentUser = await prisma.user.findUnique({
+            const foundUser = await prisma.user.findUnique({
                 where: { id: userId },
                 select: {
                     id: true,
-                    email: true,
                     name: true,
-                    role: true,
-                    isActive: true,
+                    email: true,
                     username: true,
-                    image: true,
+                    role: true,
                     specialty: true,
                     emailVerified: true,
-                    backupCodes: true,
+                    image: true,
+                    isActive: true,
+                    twoFactorEnabled: true,
+                    twoFactorSecret: true,
+                    lastLoginAt: true,
+                    lastLoginIp: true,
                     createdAt: true,
-                    updatedAt: true
-                }
+                    updatedAt: true,
+                },
             });
-            if (!currentUser) {
+            if (!foundUser) {
                 console.log(`User with ID ${userId} from token not found in database`);
                 return next(new AppError('The user belonging to this token no longer exists.', 401));
             }
             // 4) Check if user is active
-            if (currentUser.isActive === false) {
-                console.log(`User ${currentUser.email} account is inactive`);
+            if (foundUser.isActive === false) {
+                console.log(`User ${foundUser.email} account is inactive`);
                 return next(new AppError('Your account has been deactivated.', 401));
             }
             // Grant access to protected route - include all required fields
             req.user = {
-                ...currentUser,
+                ...foundUser,
                 // Add missing fields from User model with default values
                 password: '', // We don't need to expose the password
-                twoFactorEnabled: false,
-                twoFactorSecret: null,
-                lastLoginAt: null,
-                lastLoginIp: null
+                twoFactorEnabled: foundUser.twoFactorEnabled || false,
+                twoFactorSecret: foundUser.twoFactorSecret || null,
+                lastLoginAt: foundUser.lastLoginAt || null,
+                lastLoginIp: foundUser.lastLoginIp || null,
             };
             next();
         }
