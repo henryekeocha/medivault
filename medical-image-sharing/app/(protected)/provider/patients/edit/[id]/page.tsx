@@ -25,9 +25,9 @@ import {
 import { ArrowBack, Save, Person } from '@mui/icons-material';
 import { useRouter, useParams } from 'next/navigation';
 import { format, parse } from 'date-fns';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { PatientStatus } from '@prisma/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 
 // Define the form state interface
 interface PatientFormState {
@@ -80,7 +80,7 @@ export default function EditPatientPage() {
   const router = useRouter();
   const params = useParams();
   const patientId = params?.id as string;
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
 
   const [formState, setFormState] = useState<PatientFormState>(initialFormState);
   const [loading, setLoading] = useState(true);
@@ -91,18 +91,18 @@ export default function EditPatientPage() {
 
   // Fetch patient data on component mount
   useEffect(() => {
-    if (!patientId || !user?.id) return;
+    if (!isLoaded || !user) return;
+    
     fetchPatientDetails();
-  }, [patientId, user?.id]);
+  }, [isLoaded, user]);
 
   const fetchPatientDetails = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const apiClient = ApiClient.getInstance();
+      const response = await providerClient.getPatientDetails(patientId);
       
-      const response = await apiClient.getPatientDetails(patientId);
       if (response.status === 'success' && response.data) {
         // Map API response to form state
         const patient = response.data;
@@ -233,14 +233,17 @@ export default function EditPatientPage() {
       setSaving(true);
       setError(null);
       
-      const apiClient = ApiClient.getInstance();
+      // Format the date to ISO string
+      const formattedDate = typeof formState.dateOfBirth === 'string' 
+        ? formState.dateOfBirth 
+        : new Date(formState.dateOfBirth).toISOString().split('T')[0];
       
       // Format the data for the API
       const patientData = {
         name: formState.name,
-        dateOfBirth: formState.dateOfBirth,
+        dateOfBirth: formattedDate,
         gender: formState.gender,
-        status: formState.status,
+        status: formState.status as PatientStatus,
         contact: {
           email: formState.email,
           phone: formState.phone,
@@ -263,7 +266,7 @@ export default function EditPatientPage() {
       };
       
       // Call the API to update patient details
-      const response = await apiClient.updateUser(patientId, patientData);
+      const response = await providerClient.updatePatient(patientId, patientData);
       
       if (response.status === 'success') {
         setSuccessMessage('Patient information updated successfully');

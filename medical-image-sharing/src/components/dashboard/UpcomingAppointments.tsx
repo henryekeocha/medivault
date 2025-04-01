@@ -25,7 +25,7 @@ import {
 } from '@mui/icons-material';
 import { formatDistanceToNow, format } from 'date-fns';
 import { useRouter } from 'next/navigation';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
 
@@ -64,19 +64,14 @@ const UpcomingAppointments: React.FC<UpcomingAppointmentsProps> = ({
   limit = 5,
   loading: externalLoading
 }) => {
-  const theme = useTheme();
-  const router = useRouter();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [loading, setLoading] = useState(externalLoading !== undefined ? externalLoading : true);
-  const { error, handleError, clearError, withErrorHandling } = useErrorHandler({
-    context: 'Upcoming Appointments'
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const theme = useTheme();
+  const { error, handleError, clearError } = useErrorHandler({
+    context: 'Upcoming Appointments',
+    showToastByDefault: true
   });
-
-  useEffect(() => {
-    if (externalLoading !== undefined) {
-      setLoading(externalLoading);
-    }
-  }, [externalLoading]);
 
   useEffect(() => {
     fetchAppointments();
@@ -92,32 +87,31 @@ const UpcomingAppointments: React.FC<UpcomingAppointmentsProps> = ({
   const fetchAppointments = async () => {
     if (!providerId) return;
     
-    await withErrorHandling(async () => {
+    try {
       setLoading(true);
       clearError();
       
-      try {
-        const apiClient = ApiClient.getInstance();
-        
-        // Get today's date in YYYY-MM-DD format
-        const today = new Date().toISOString().split('T')[0];
-        
-        // Fetch upcoming appointments
-        const response = await apiClient.getProviderAppointments(providerId, {
-          status: 'SCHEDULED,CONFIRMED',
-          startDate: today,
-          limit: limit,
-        });
-        
-        if (response && response.data && response.data.data) {
-          setAppointments(response.data.data);
-        } else {
-          setAppointments([]);
-        }
-      } finally {
-        setLoading(false);
+      // Get today's date in YYYY-MM-DD format
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Fetch upcoming appointments
+      const response = await providerClient.getAppointments({
+        status: 'SCHEDULED,CONFIRMED',
+        startDate: today,
+        limit: limit,
+      });
+      
+      if (response.status === 'success') {
+        setAppointments(response.data.data);
+      } else {
+        setAppointments([]);
       }
-    });
+    } catch (err) {
+      handleError(err);
+      setAppointments([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleViewAll = () => {

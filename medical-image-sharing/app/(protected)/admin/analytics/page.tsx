@@ -28,7 +28,7 @@ import {
   Cell,
 } from 'recharts';
 import { Analytics as AnalyticsIcon } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
 
 export default function AdminAnalytics() {
   const theme = useTheme();
@@ -47,10 +47,9 @@ export default function AdminAnalytics() {
     async function fetchAnalyticsData() {
       try {
         setLoading(true);
-        const apiClient = ApiClient.getInstance();
         
         // Fetch admin statistics for summary stats
-        const statsResponse = await apiClient.getAdminStatistics();
+        const statsResponse = await adminClient.getStatistics();
         if (statsResponse.status === 'success') {
           const { userStats, imageStats } = statsResponse.data;
           
@@ -69,16 +68,11 @@ export default function AdminAnalytics() {
           ]);
         }
         
-        // Fetch user activity data by month
-        const userActivityResponse = await apiClient.get<any>('/admin/analytics/user-activity');
-        if (userActivityResponse && userActivityResponse.data) {
-          setUserActivityData(userActivityResponse.data);
-        }
-        
-        // Fetch image upload trends
-        const imageUploadsResponse = await apiClient.get<any>('/admin/analytics/image-uploads');
-        if (imageUploadsResponse && imageUploadsResponse.data) {
-          setImageUploadData(imageUploadsResponse.data);
+        // Fetch system metrics for activity data
+        const metricsResponse = await adminClient.getSystemMetrics();
+        if (metricsResponse.status === 'success') {
+          setUserActivityData(metricsResponse.data.userActivity || []);
+          setImageUploadData(metricsResponse.data.imageUploads || []);
         }
         
         setError(null);

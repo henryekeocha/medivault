@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Container, Typography, Box, TextField, Grid } from '@mui/material';
-import { ProfileForm } from '@/components/profile/ProfileForm';
+import ProfileForm from '@/components/profile/ProfileForm';
 
 export default function AdminProfilePage() {
   const adminFields = (

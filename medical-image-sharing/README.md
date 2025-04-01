@@ -4,7 +4,7 @@ A modern platform for securely sharing and analyzing medical imaging data betwee
 
 ## Features
 
-- **User Authentication**: Secure login system with role-based access control (Patient, Provider, Admin).
+- **User Authentication**: Secure authentication powered by Clerk with role-based access control (Patient, Provider, Admin).
 - **Appointment Management**: Schedule, view, and manage medical appointments.
 - **Image Upload & Sharing**: Share medical images securely between patients and healthcare providers.
 - **Image Analysis**: AI-assisted analysis of medical images.
@@ -17,6 +17,7 @@ A modern platform for securely sharing and analyzing medical imaging data betwee
 - Node.js (v14 or higher)
 - npm or yarn
 - Database (MongoDB or PostgreSQL)
+- Clerk account for authentication
 
 ### Installation
 
@@ -34,7 +35,11 @@ A modern platform for securely sharing and analyzing medical imaging data betwee
    ```
 
 3. Set up environment variables:
-   Copy the `.env.example` file to `.env` and fill in the required variables.
+   Copy the `.env.example` file to `.env` and fill in the required variables:
+   ```
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+   CLERK_SECRET_KEY=your_clerk_secret_key
+   ```
 
 4. Start the development server:
    ```bash

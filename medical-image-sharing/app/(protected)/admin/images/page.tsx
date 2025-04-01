@@ -35,54 +35,8 @@ import {
   Download as DownloadIcon,
   FilterList as FilterIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
-import { ApiResponse } from '@/lib/api/types';
-
-interface Image {
-  id: string;
-  title: string;
-  uploadedBy: string;
-  uploadDate: string;
-  patientId: string;
-  type: string;
-  size: string;
-  status: string;
-  thumbnail: string;
-  url?: string;
-}
-
-// Add extension methods to ApiClient at the top of the file before the component
-// These are temporary extensions to match the expected API while in development
-declare module '@/lib/api/client' {
-  interface ApiClient {
-    getImageDownloadUrl(imageId: string): Promise<ApiResponse<{downloadUrl: string, filename?: string}>>;
-    getImageDetails(imageId: string): Promise<ApiResponse<Image>>;
-  }
-}
-
-// Temporarily add these methods to the ApiClient prototype
-ApiClient.prototype.getImageDownloadUrl = async function(imageId: string): Promise<ApiResponse<{downloadUrl: string, filename?: string}>> {
-  // This is a temporary implementation
-  const response = await this.get<{downloadUrl: string, filename?: string}>(`/images/${imageId}/download`);
-  // Construct a proper ApiResponse instead of type casting
-  return {
-    status: 'success',
-    data: {
-      downloadUrl: typeof response === 'object' && response.downloadUrl ? response.downloadUrl : '',
-      filename: typeof response === 'object' && response.filename ? response.filename : undefined
-    }
-  };
-};
-
-ApiClient.prototype.getImageDetails = async function(imageId: string): Promise<ApiResponse<Image>> {
-  // This is a temporary implementation
-  const response = await this.get<Image>(`/images/${imageId}`);
-  // Construct a proper ApiResponse instead of type casting
-  return {
-    status: 'success',
-    data: response as Image
-  };
-};
+import { imageService } from '@/lib/api/services/image.service';
+import { Image, ApiResponse } from '@/lib/api/types';
 
 export default function AdminImagesPage() {
   const [images, setImages] = useState<Image[]>([]);
@@ -98,33 +52,36 @@ export default function AdminImagesPage() {
   const [notification, setNotification] = useState<{message: string, severity: 'success' | 'error'} | null>(null);
 
   useEffect(() => {
+    imageService.setUserRole('ADMIN');
     fetchImages();
   }, [typeFilter, statusFilter]);
 
   const fetchImages = async () => {
     try {
       setLoading(true);
-      const apiClient = ApiClient.getInstance();
       
-      const params: Record<string, string> = {};
+      const params: Record<string, any> = {
+        page: 1,
+        limit: 50
+      };
       if (typeFilter !== 'ALL') params.type = typeFilter;
       if (statusFilter !== 'ALL') params.status = statusFilter;
       
-      const response = await apiClient.getImages(params);
+      const response = await imageService.getImages(params);
       
       if (response.status === 'success') {
-        // Correctly access and transform the paginated data into the expected format
-        setImages(response.data.data.map(img => ({
-          id: img.id,
+        const imageData = Array.isArray(response.data) ? response.data : response.data.data;
+        setImages(imageData.map(img => ({
+          ...img,
           title: img.filename || 'Untitled',
-          uploadedBy: img.metadata?.uploadedBy || 'Unknown',
-          uploadDate: img.uploadDate?.toString() || new Date().toString(),
+          uploadedBy: img.user?.name || 'Unknown',
+          uploadDate: new Date(img.uploadDate || img.createdAt).toLocaleString(),
           patientId: img.patientId || 'Unknown',
           type: img.type || 'Unknown',
           size: formatFileSize(img.fileSize || 0),
           status: img.status || 'Unknown',
-          thumbnail: `/api/images/${img.id}/thumbnail`,
-          url: `/api/images/${img.id}`
+          thumbnail: imageService.getThumbnailUrl(img),
+          url: imageService.getImageUrl(img)
         })));
         setError(null);
       } else {
@@ -138,7 +95,6 @@ export default function AdminImagesPage() {
     }
   };
 
-  // Helper function to format file size
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes';
     
@@ -151,9 +107,9 @@ export default function AdminImagesPage() {
 
   const filteredImages = images.filter(image => {
     const matchesSearch = 
-      image.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      image.uploadedBy.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      image.patientId.toLowerCase().includes(searchTerm.toLowerCase());
+      (image.filename || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (image.user?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (image.patientId || '').toLowerCase().includes(searchTerm.toLowerCase());
     
     return matchesSearch;
   });
@@ -167,15 +123,13 @@ export default function AdminImagesPage() {
     if (!imageToDelete) return;
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.deleteImage(imageToDelete);
+      const response = await imageService.deleteImage(imageToDelete);
       
       if (response.status === 'success') {
         setNotification({
           message: 'Image successfully deleted',
           severity: 'success'
         });
-        // Refresh images list
         fetchImages();
       } else {
         setNotification({
@@ -197,24 +151,15 @@ export default function AdminImagesPage() {
 
   const handleDownload = async (imageId: string) => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getImageDownloadUrl(imageId);
-      
-      if (response.status === 'success' && response.data.downloadUrl) {
-        // Create a temporary anchor element to trigger the download
-        const link = document.createElement('a');
-        link.href = response.data.downloadUrl;
-        link.download = response.data.filename || 'medical-image.jpg';
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        setNotification({
-          message: 'Failed to download image',
-          severity: 'error'
-        });
-      }
+      const blob = await imageService.downloadImage(imageId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `image-${imageId}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
       console.error('Error downloading image:', err);
       setNotification({
@@ -226,9 +171,7 @@ export default function AdminImagesPage() {
 
   const handleView = async (imageId: string) => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getImageDetails(imageId);
-      
+      const response = await imageService.getImage(imageId);
       if (response.status === 'success') {
         setSelectedImage(response.data);
         setViewDialogOpen(true);
@@ -239,7 +182,7 @@ export default function AdminImagesPage() {
         });
       }
     } catch (err) {
-      console.error('Error viewing image:', err);
+      console.error('Error loading image details:', err);
       setNotification({
         message: 'An error occurred while loading image details',
         severity: 'error'
@@ -252,202 +195,193 @@ export default function AdminImagesPage() {
   };
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Image Management
-      </Typography>
+    <Container maxWidth="xl">
+      <Box sx={{ py: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          Image Management
+        </Typography>
 
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center">
-          <TextField
-            label="Search Images"
-            variant="outlined"
-            size="small"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            sx={{ width: 300 }}
-          />
-          
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Type</InputLabel>
-            <Select
-              value={typeFilter}
-              label="Type"
-              onChange={(e) => setTypeFilter(e.target.value as string)}
-            >
-              <MenuItem value="ALL">All Types</MenuItem>
-              <MenuItem value="X-RAY">X-Ray</MenuItem>
-              <MenuItem value="MRI">MRI</MenuItem>
-              <MenuItem value="CT">CT Scan</MenuItem>
-              <MenuItem value="ULTRASOUND">Ultrasound</MenuItem>
-            </Select>
-          </FormControl>
-
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Status</InputLabel>
-            <Select
-              value={statusFilter}
-              label="Status"
-              onChange={(e) => setStatusFilter(e.target.value as string)}
-            >
-              <MenuItem value="ALL">All Status</MenuItem>
-              <MenuItem value="ACTIVE">Active</MenuItem>
-              <MenuItem value="ARCHIVED">Archived</MenuItem>
-              <MenuItem value="DELETED">Deleted</MenuItem>
-            </Select>
-          </FormControl>
-        </Stack>
-      </Paper>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-          <CircularProgress />
-        </Box>
-      ) : filteredImages.length === 0 ? (
-        <Paper sx={{ p: 3, textAlign: 'center' }}>
-          <Typography>No images found matching your criteria</Typography>
-        </Paper>
-      ) : (
-        <Grid container spacing={3}>
-          {filteredImages.map((image) => (
-            <Grid item xs={12} sm={6} md={4} key={image.id}>
-              <Card>
-                <CardMedia
-                  component="img"
-                  height="200"
-                  image={image.thumbnail}
-                  alt={image.title}
-                />
-                <CardContent>
-                  <Typography variant="h6" component="div" gutterBottom>
-                    {image.title}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Uploaded by: {image.uploadedBy}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Patient ID: {image.patientId}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Date: {new Date(image.uploadDate).toLocaleDateString()}
-                  </Typography>
-                  <Box sx={{ mt: 1 }}>
-                    <Chip
-                      label={image.type}
-                      size="small"
-                      sx={{ mr: 1 }}
-                    />
-                    <Chip
-                      label={image.status}
-                      color={image.status === 'ACTIVE' ? 'success' : 'default'}
-                      size="small"
-                    />
-                  </Box>
-                </CardContent>
-                <CardActions>
-                  <IconButton size="small" onClick={() => handleView(image.id)}>
-                    <ViewIcon />
-                  </IconButton>
-                  <IconButton size="small" onClick={() => handleDownload(image.id)}>
-                    <DownloadIcon />
-                  </IconButton>
-                  <IconButton size="small" onClick={() => handleDelete(image.id)}>
-                    <DeleteIcon />
-                  </IconButton>
-                </CardActions>
-              </Card>
-            </Grid>
-          ))}
+        <Grid container spacing={2} sx={{ mb: 4 }}>
+          <Grid item xs={12} sm={4}>
+            <TextField
+              fullWidth
+              label="Search Images"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by filename, uploader, or patient ID"
+            />
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <FormControl fullWidth>
+              <InputLabel>Type Filter</InputLabel>
+              <Select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                label="Type Filter"
+              >
+                <MenuItem value="ALL">All Types</MenuItem>
+                <MenuItem value="XRAY">X-Ray</MenuItem>
+                <MenuItem value="MRI">MRI</MenuItem>
+                <MenuItem value="CT">CT Scan</MenuItem>
+                <MenuItem value="ULTRASOUND">Ultrasound</MenuItem>
+                <MenuItem value="OTHER">Other</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <FormControl fullWidth>
+              <InputLabel>Status Filter</InputLabel>
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                label="Status Filter"
+              >
+                <MenuItem value="ALL">All Status</MenuItem>
+                <MenuItem value="PROCESSING">Processing</MenuItem>
+                <MenuItem value="READY">Ready</MenuItem>
+                <MenuItem value="ERROR">Error</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
         </Grid>
-      )}
 
-      {/* Image Viewer Dialog */}
-      <Dialog
-        open={viewDialogOpen}
-        onClose={() => setViewDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        {selectedImage && (
-          <>
-            <DialogTitle>{selectedImage.title}</DialogTitle>
-            <DialogContent>
-              <Box sx={{ textAlign: 'center', my: 2 }}>
-                <img 
-                  src={selectedImage.url || selectedImage.thumbnail} 
-                  alt={selectedImage.title}
-                  style={{ maxWidth: '100%', maxHeight: '60vh' }}
-                />
-              </Box>
-              <Typography variant="body1" gutterBottom>
-                <strong>Uploaded by:</strong> {selectedImage.uploadedBy}
-              </Typography>
-              <Typography variant="body1" gutterBottom>
-                <strong>Patient ID:</strong> {selectedImage.patientId}
-              </Typography>
-              <Typography variant="body1" gutterBottom>
-                <strong>Type:</strong> {selectedImage.type}
-              </Typography>
-              <Typography variant="body1" gutterBottom>
-                <strong>Size:</strong> {selectedImage.size}
-              </Typography>
-              <Typography variant="body1" gutterBottom>
-                <strong>Upload Date:</strong> {new Date(selectedImage.uploadDate).toLocaleString()}
-              </Typography>
-              <Typography variant="body1" gutterBottom>
-                <strong>Status:</strong> {selectedImage.status}
-              </Typography>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
-              <Button onClick={() => handleDownload(selectedImage.id)}>Download</Button>
-            </DialogActions>
-          </>
-        )}
-      </Dialog>
-
-      {/* Confirmation Dialog */}
-      <Dialog
-        open={confirmDialogOpen}
-        onClose={() => setConfirmDialogOpen(false)}
-      >
-        <DialogTitle>Delete Image</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Are you sure you want to delete this image? This action cannot be undone.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDialogOpen(false)}>Cancel</Button>
-          <Button onClick={confirmDelete} color="error" autoFocus>
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Notification */}
-      {notification && (
-        <Snackbar
-          open={true}
-          autoHideDuration={6000}
-          onClose={handleCloseNotification}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        >
-          <Alert 
-            onClose={handleCloseNotification} 
-            severity={notification.severity}
-            sx={{ width: '100%' }}
-          >
-            {notification.message}
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
           </Alert>
-        </Snackbar>
-      )}
+        )}
+
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : filteredImages.length === 0 ? (
+          <Paper sx={{ p: 3, textAlign: 'center' }}>
+            <Typography>No images found matching your criteria</Typography>
+          </Paper>
+        ) : (
+          <Grid container spacing={3}>
+            {filteredImages.map((image) => (
+              <Grid item xs={12} sm={6} md={4} lg={3} key={image.id}>
+                <Card>
+                  <CardMedia
+                    component="img"
+                    height="200"
+                    image={imageService.getThumbnailUrl(image)}
+                    alt={image.filename}
+                    sx={{ objectFit: 'contain' }}
+                  />
+                  <CardContent>
+                    <Typography variant="h6" noWrap>
+                      {image.filename}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Uploaded by: {image.user?.name || 'Unknown'}
+                    </Typography>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                      <Chip label={image.type} size="small" />
+                      <Chip label={image.status} size="small" color={
+                        image.status === 'READY' ? 'success' :
+                        image.status === 'ERROR' ? 'error' :
+                        'default'
+                      } />
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      Size: {formatFileSize(image.fileSize)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Patient ID: {image.patientId || 'N/A'}
+                    </Typography>
+                  </CardContent>
+                  <CardActions>
+                    <IconButton onClick={() => handleView(image.id)} title="View Details">
+                      <ViewIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDownload(image.id)} title="Download">
+                      <DownloadIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDelete(image.id)} title="Delete">
+                      <DeleteIcon />
+                    </IconButton>
+                  </CardActions>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+        )}
+
+        <Dialog
+          open={viewDialogOpen}
+          onClose={() => setViewDialogOpen(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          <DialogTitle>Image Details</DialogTitle>
+          <DialogContent>
+            {selectedImage && (
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <img
+                    src={imageService.getImageUrl(selectedImage)}
+                    alt={selectedImage.filename}
+                    style={{ width: '100%', height: 'auto', maxHeight: '400px', objectFit: 'contain' }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="h6">{selectedImage.filename}</Typography>
+                  <Typography>Type: {selectedImage.type}</Typography>
+                  <Typography>Status: {selectedImage.status}</Typography>
+                  <Typography>Size: {formatFileSize(selectedImage.fileSize)}</Typography>
+                  <Typography>Patient ID: {selectedImage.patientId || 'N/A'}</Typography>
+                  <Typography>Upload Date: {new Date(selectedImage.uploadDate || selectedImage.createdAt).toLocaleString()}</Typography>
+                  <Typography>Uploaded By: {selectedImage.user?.name || 'Unknown'}</Typography>
+                  {selectedImage.notes && (
+                    <Typography>Notes: {selectedImage.notes}</Typography>
+                  )}
+                  {selectedImage.diagnosis && (
+                    <Typography>Diagnosis: {selectedImage.diagnosis}</Typography>
+                  )}
+                </Grid>
+              </Grid>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={confirmDialogOpen}
+          onClose={() => setConfirmDialogOpen(false)}
+        >
+          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Are you sure you want to delete this image? This action cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setConfirmDialogOpen(false)}>Cancel</Button>
+            <Button onClick={confirmDelete} color="error">Delete</Button>
+          </DialogActions>
+        </Dialog>
+
+        {notification && (
+          <Snackbar
+            open={Boolean(notification)}
+            autoHideDuration={6000}
+            onClose={() => setNotification(null)}
+          >
+            <Alert
+              onClose={() => setNotification(null)}
+              severity={notification.severity}
+              sx={{ width: '100%' }}
+            >
+              {notification.message}
+            </Alert>
+          </Snackbar>
+        )}
+      </Box>
     </Container>
   );
 } 

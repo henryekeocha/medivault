@@ -11,8 +11,10 @@ import {
 import StatCard from '@/components/dashboard/StatCard';
 import UsageChart from '@/components/dashboard/UsageChart';
 import ActivityTimeline from '@/components/dashboard/ActivityTimeline';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { patientClient } from '@/lib/api/patientClient';
+import { sharedClient } from '@/lib/api/sharedClient';
+import { useUser } from '@clerk/nextjs';
+import { withProtectedRoute } from '@/components/ProtectedRoute';
 
 // Define the Activity interface to match ActivityTimeline component
 interface Activity {
@@ -23,8 +25,8 @@ interface Activity {
   avatar: string;
 }
 
-export default function PatientDashboard() {
-  const { user } = useAuth();
+function PatientDashboard() {
+  const { user, isLoaded } = useUser();
   const [loading, setLoading] = useState(true);
   const [patientStats, setPatientStats] = useState({
     appointments: {
@@ -59,9 +61,8 @@ export default function PatientDashboard() {
       
       try {
         setLoading(true);
-        const apiClient = ApiClient.getInstance();
         console.log('Fetching metrics for user:', user.id);
-        const response = await apiClient.getUserMetrics(user.id);
+        const response = await sharedClient.getUserMetrics(user.id);
         
         console.log('Received response:', response);
         
@@ -74,20 +75,20 @@ export default function PatientDashboard() {
             appointments: {
               upcoming: metrics.appointments?.upcoming || 0,
               past: metrics.appointments?.completed || 0,
-              nextAppointment: null, // This field is not available in the backend response
+              nextAppointment: null,
             },
             images: {
               total: metrics.images?.total || 0,
               recentlyUploaded: metrics.images?.recentUploads || 0,
-              recentlyViewed: 0, // This field is not available in the backend response
+              recentlyViewed: 0,
             },
             messages: {
               unread: metrics.messages?.unread || 0,
               total: metrics.messages?.total || 0,
             },
             records: {
-              total: 0, // This field is not available in the backend response
-              recentlyUpdated: 0, // This field is not available in the backend response
+              total: 0,
+              recentlyUpdated: 0,
             },
           });
           
@@ -116,7 +117,6 @@ export default function PatientDashboard() {
           setRecentActivity(recentActivityData);
         } else {
           console.error('Invalid response format:', response);
-          // Set default values when response is invalid
           setRecentActivity([
             { name: 'Image Uploads', value: 0 },
             { name: 'Downloads', value: 0 },
@@ -133,7 +133,6 @@ export default function PatientDashboard() {
             name: error.name
           });
         }
-        // Set default values on error
         setRecentActivity([
           { name: 'Image Uploads', value: 0 },
           { name: 'Downloads', value: 0 },
@@ -170,6 +169,14 @@ export default function PatientDashboard() {
     ];
   };
 
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
@@ -178,7 +185,7 @@ export default function PatientDashboard() {
         </Typography>
         {user && (
           <Typography variant="subtitle1">
-            Welcome back, {user.name?.split(' ')[0] || 'Patient'}
+            Welcome back, {user.firstName || 'Patient'}
           </Typography>
         )}
       </Box>
@@ -248,4 +255,9 @@ export default function PatientDashboard() {
       </Grid>
     </Container>
   );
-} 
+}
+
+export default withProtectedRoute(PatientDashboard, {
+  allowedRoles: ['PATIENT'],
+  requireAuth: true,
+}); 

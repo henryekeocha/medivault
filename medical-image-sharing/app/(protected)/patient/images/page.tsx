@@ -27,37 +27,44 @@ import {
   Search as SearchIcon,
   Visibility as ViewIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
-import { Image, ImageType, ImageStatus } from '@prisma/client';
+import { ImageType, ImageStatus, Role } from '@prisma/client';
 import { useRouter } from 'next/navigation';
-import { PaginatedResponse } from '@/lib/api';
-
-// Define our own Image type to match what we expect from the API
-interface ImageData {
-  id: string;
-  patientId: string;
-  type: string;
-  status: string;
-  url: string;
-  thumbnailUrl?: string;
-  description?: string;
-  metadata?: Record<string, any>;
-  createdAt: string;
-  updatedAt: string;
-  s3Url?: string;
-  filename?: string;
-  modality?: string;
-  uploadDate?: string;
-  studyDate?: string;
-}
+import { useUser } from '@clerk/nextjs';
+import { imageService } from '@/lib/api/services/image.service';
+import { useErrorHandler } from '@/hooks/useErrorHandler';
+import { ImageMetadata, PaginatedResponse, Image } from '@/lib/api/types';
 
 export default function PatientImagesPage() {
   const router = useRouter();
+  const { user, isLoaded } = useUser();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
-  const [images, setImages] = useState<ImageData[]>([]);
+  const [images, setImages] = useState<Image[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { error, handleError, clearError } = useErrorHandler({
+    context: 'Patient Images',
+    showToastByDefault: true
+  });
+
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      router.push('/auth/login');
+      return;
+    }
+
+    // Check if user has patient role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PATIENT') {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (userRole) {
+      imageService.setUserRole(userRole as Role);
+    }
+  }, [isLoaded, user, router]);
 
   useEffect(() => {
     fetchImages();
@@ -65,37 +72,58 @@ export default function PatientImagesPage() {
 
   const fetchImages = async () => {
     setLoading(true);
-    setError(null);
+    clearError();
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getImages({
-        type: filterType as ImageType || undefined,
-        status: ImageStatus.READY, // Only show ready images
+      const response = await imageService.getImages({
+        patientId: user?.id,
         page: 1,
-        limit: 20,
-        search: searchTerm
+        limit: 20
       });
       
-      if (response?.status === 'success') {
-        // Handle both paginated and non-paginated responses
-        const responseData = response.data as any;
-        const images = responseData?.data || responseData?.images || [];
-        
-        const imageData = images.map((img: any) => ({
-          ...img,
-          // Ensure metadata is properly typed if needed
-          metadata: img.metadata || {}
-        }));
-        setImages(imageData);
-      } else {
-        console.error('Invalid response format:', response);
-        setError('Failed to load images');
-        setImages([]);
+      // Extract images from any valid response format
+      let imageList: Image[] = [];
+      
+      if (response) {
+        // Check for our standard API response format
+        if (response.status === 'success') {
+          if (Array.isArray(response.data)) {
+            imageList = response.data;
+          } else if (response.data && Array.isArray(response.data.data)) {
+            imageList = response.data.data;
+          }
+        } 
+        // Check for direct data access (Axios response)
+        else if (response.data) {
+          if (Array.isArray(response.data)) {
+            imageList = response.data;
+          } else if (response.data.data && Array.isArray(response.data.data)) {
+            imageList = response.data.data;
+          }
+        }
       }
+      
+      // Filter images
+      const filteredImages = imageList.filter((image) => {
+        const matchesType = !filterType || image.type === filterType;
+        const matchesSearch = !searchTerm || 
+          image.filename?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (image.metadata as ImageMetadata)?.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesType && matchesSearch;
+      });
+      
+      setImages(filteredImages);
     } catch (err) {
       console.error('Error fetching images:', err);
-      setError('An error occurred while fetching images');
       setImages([]);
+      
+      // Only show the error if it's a specific type we want to display
+      // Silently fail for network or generic errors
+      if (err instanceof Error && 
+          err.message !== 'Failed to fetch' && 
+          !err.message.includes('Network Error') &&
+          !(err instanceof Object && 'status' in err && err.status === 200)) {
+        handleError(err);
+      }
     } finally {
       setLoading(false);
     }
@@ -110,19 +138,12 @@ export default function PatientImagesPage() {
   };
 
   const handleShare = async (imageId: string) => {
-    try {
-      const apiClient = ApiClient.getInstance();
-      // Navigate to share page with the image ID
-      router.push(`/patient/share?imageId=${imageId}` as any);
-    } catch (err) {
-      console.error('Error initiating share:', err);
-    }
+    router.push(`/patient/share?imageId=${imageId}` as any);
   };
 
   const handleDownload = async (imageId: string) => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const blob = await apiClient.downloadImage(imageId);
+      const blob = await imageService.downloadImage(imageId);
       
       // Create an object URL for the blob
       const url = window.URL.createObjectURL(blob);
@@ -138,10 +159,17 @@ export default function PatientImagesPage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err) {
-      console.error('Error downloading image:', err);
-      setError('Failed to download image');
+      handleError(err);
     }
   };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -200,70 +228,73 @@ export default function PatientImagesPage() {
         </Alert>
       ) : (
         <Grid container spacing={3}>
-          {images.map((image) => (
-            <Grid item xs={12} sm={6} md={4} key={image.id}>
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardMedia
-                  component="img"
-                  height="180"
-                  image={image.s3Url || image.url || `/api/images/${image.id}/thumbnail`}
-                  alt={image.filename || `Image ${image.id}`}
-                  sx={{ objectFit: 'cover' }}
-                />
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    {image.filename || `Image ${image.id}`}
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
-                    <Chip 
-                      label={image.type || 'Unknown'} 
-                      size="small" 
-                      color="primary"
-                      variant="outlined"
-                    />
-                    {image.modality && (
+          {images.map((image) => {
+            const metadata = image.metadata as ImageMetadata;
+            return (
+              <Grid item xs={12} sm={6} md={4} key={image.id}>
+                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <CardMedia
+                    component="img"
+                    height="180"
+                    image={image.s3Url || `/api/images/${image.id}/thumbnail`}
+                    alt={image.filename || `Image ${image.id}`}
+                    sx={{ objectFit: 'cover' }}
+                  />
+                  <CardContent sx={{ flexGrow: 1 }}>
+                    <Typography variant="h6" gutterBottom>
+                      {image.filename || `Image ${image.id}`}
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
                       <Chip 
-                        label={image.modality} 
-                        size="small"
+                        label={image.type || 'Unknown'} 
+                        size="small" 
+                        color="primary"
                         variant="outlined"
                       />
-                    )}
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Uploaded on: {new Date(image.uploadDate || image.createdAt).toLocaleDateString()}
-                  </Typography>
-                  {image.studyDate && (
+                      {metadata?.modality && (
+                        <Chip 
+                          label={metadata.modality} 
+                          size="small"
+                          variant="outlined"
+                        />
+                      )}
+                    </Box>
                     <Typography variant="body2" color="text.secondary">
-                      Study date: {new Date(image.studyDate).toLocaleDateString()}
+                      Uploaded on: {new Date(image.uploadDate).toLocaleDateString()}
                     </Typography>
-                  )}
-                </CardContent>
-                <CardActions>
-                  <Button 
-                    size="small" 
-                    startIcon={<ViewIcon />}
-                    onClick={() => handleView(image.id)}
-                  >
-                    View
-                  </Button>
-                  <Button 
-                    size="small" 
-                    startIcon={<ShareIcon />}
-                    onClick={() => handleShare(image.id)}
-                  >
-                    Share
-                  </Button>
-                  <Button 
-                    size="small" 
-                    startIcon={<DownloadIcon />}
-                    onClick={() => handleDownload(image.id)}
-                  >
-                    Download
-                  </Button>
-                </CardActions>
-              </Card>
-            </Grid>
-          ))}
+                    {metadata?.scanDate && (
+                      <Typography variant="body2" color="text.secondary">
+                        Study date: {new Date(metadata.scanDate).toLocaleDateString()}
+                      </Typography>
+                    )}
+                  </CardContent>
+                  <CardActions>
+                    <Button 
+                      size="small" 
+                      startIcon={<ViewIcon />}
+                      onClick={() => handleView(image.id)}
+                    >
+                      View
+                    </Button>
+                    <Button 
+                      size="small" 
+                      startIcon={<ShareIcon />}
+                      onClick={() => handleShare(image.id)}
+                    >
+                      Share
+                    </Button>
+                    <Button 
+                      size="small" 
+                      startIcon={<DownloadIcon />}
+                      onClick={() => handleDownload(image.id)}
+                    >
+                      Download
+                    </Button>
+                  </CardActions>
+                </Card>
+              </Grid>
+            );
+          })}
         </Grid>
       )}
     </Container>

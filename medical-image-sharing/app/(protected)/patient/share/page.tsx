@@ -35,59 +35,42 @@ import {
   ContentCopy as CopyIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { patientClient } from '@/lib/api/patientClient';
+import { useUser } from '@clerk/nextjs';
+import { User } from '@/lib/api/types';
 
-// Extend the ApiClient interface to include the missing methods
-declare module '@/lib/api/client' {
-  interface ApiClient {
-    getPatientProviders(): Promise<{
-      status: string;
-      data: Provider[];
-      error?: { message: string };
-    }>;
-    
-    getPatientImages(): Promise<{
-      status: string;
-      data: Image[];
-      error?: { message: string };
-    }>;
-    
-    getPatientSharedImages(): Promise<{
-      status: string;
-      data: SharedImage[];
-      error?: { message: string };
-    }>;
-    
-    shareImage(data: {
-      providerId: string;
-      imageId: string;
-      expiryDays: number;
-      allowDownload: boolean;
-    }): Promise<{
-      status: string;
-      data?: any;
-      message?: string;
-      error?: { message: string };
-    }>;
-    
-    revokeImageAccess(shareId: string): Promise<{
-      status: string;
-      data?: any;
-      message?: string;
-      error?: { message: string };
-    }>;
-  }
-}
-
-interface Provider {
-  id: string;
-  name: string;
+interface Provider extends User {
+  specialty?: string;
+  hospital?: string;
 }
 
 interface Image {
   id: string;
-  name: string;
+  filename: string;
+  fileType: string;
+  fileSize: number;
+  uploadDate: string;
+  metadata: string | null;
+  status: string;
+  type: string;
+  patientId: string | null;
+  studyDate: string | null;
+  modality: string | null;
+  bodyPart: string | null;
+  diagnosis: string | null;
+  notes: string | null;
+  tags: string[];
+  processingStarted: string | null;
+  processingEnded: string | null;
+  errorMessage: string | null;
+  s3Key: string;
+  s3Url: string | null;
+  contentType: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastViewed: string | null;
+  viewCount: number;
+  userId: string;
 }
 
 interface SharedImage {
@@ -100,7 +83,7 @@ interface SharedImage {
 }
 
 export default function PatientSharePage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const [selectedProvider, setSelectedProvider] = useState('');
   const [selectedImage, setSelectedImage] = useState('');
   const [expiryDays, setExpiryDays] = useState('7');
@@ -125,16 +108,27 @@ export default function PatientSharePage() {
 
   // Fetch providers, images, and shared images on component mount
   useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      return;
+    }
+
+    // Check if user has patient role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PATIENT') {
+      return;
+    }
+
     fetchProviders();
     fetchImages();
     fetchSharedImages();
-  }, []);
+  }, [isLoaded, user]);
 
   const fetchProviders = async () => {
     try {
       setLoading(prev => ({ ...prev, providers: true }));
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getPatientProviders();
+      const response = await patientClient.getProviders();
       
       if (response.status === 'success') {
         setProviders(response.data);
@@ -151,11 +145,10 @@ export default function PatientSharePage() {
   const fetchImages = async () => {
     try {
       setLoading(prev => ({ ...prev, images: true }));
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getPatientImages();
+      const response = await patientClient.getImages();
       
       if (response?.status === 'success' && response?.data) {
-        setImages(Array.isArray(response.data) ? response.data : []);
+        setImages(response.data.data || []);
       } else {
         console.error('Failed to fetch images:', response);
         setImages([]);
@@ -170,10 +163,17 @@ export default function PatientSharePage() {
 
   const fetchSharedImages = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getPatientSharedImages();
+      const response = await patientClient.getSharedImages();
       if (response.status === 'success' && Array.isArray(response.data)) {
-        setSharedImages(response.data);
+        const transformedImages: SharedImage[] = response.data.map(image => ({
+          id: image.id,
+          name: image.filename,
+          sharedWith: '',  // This will be populated from the share data
+          expiryDate: '',  // This will be populated from the share data
+          accessCount: 0,  // This will be populated from the share data
+          link: ''        // This will be populated from the share data
+        }));
+        setSharedImages(transformedImages);
       } else {
         console.error('Invalid response format:', response);
         setSharedImages([]);
@@ -204,9 +204,8 @@ export default function PatientSharePage() {
     
     try {
       setLoading(prev => ({ ...prev, sharing: true }));
-      const apiClient = ApiClient.getInstance();
       
-      const response = await apiClient.shareImage({
+      const response = await patientClient.shareImage({
         providerId: selectedProvider,
         imageId: selectedImage,
         expiryDays: parseInt(expiryDays),
@@ -229,7 +228,7 @@ export default function PatientSharePage() {
         fetchSharedImages();
       } else {
         setNotification({
-          message: response.message || 'Failed to share image',
+          message: response.error?.message || 'Failed to share image',
           severity: 'error',
         });
       }
@@ -261,8 +260,7 @@ export default function PatientSharePage() {
 
   const confirmRevokeAccess = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.revokeImageAccess(confirmDialog.shareId);
+      const response = await patientClient.revokeImageAccess(confirmDialog.shareId);
       
       if (response.status === 'success') {
         setNotification({
@@ -274,7 +272,7 @@ export default function PatientSharePage() {
         fetchSharedImages();
       } else {
         setNotification({
-          message: response.message || 'Failed to revoke access',
+          message: response.error?.message || 'Failed to revoke access',
           severity: 'error',
         });
       }
@@ -296,6 +294,14 @@ export default function PatientSharePage() {
   const handleCloseNotification = () => {
     setNotification(null);
   };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -349,7 +355,7 @@ export default function PatientSharePage() {
               >
                 {images.map((image) => (
                   <MenuItem key={image.id} value={image.id}>
-                    {image.name}
+                    {image.filename}
                   </MenuItem>
                 ))}
               </Select>

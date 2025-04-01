@@ -1,7 +1,7 @@
 import express from 'express';
 import type { RequestHandler } from 'express';
 import * as analysisController from '../controllers/analysis.controller.js';
-import { protect } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
 import { hipaaLogger } from '../middleware/encryption.js';
 import { rateLimiter } from '../middleware/rateLimiter.js';
 

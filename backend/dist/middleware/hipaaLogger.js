@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 export const hipaaLogger = (req, res, next) => {
     const oldWrite = res.write;
     const oldEnd = res.end;
@@ -17,7 +17,7 @@ export const hipaaLogger = (req, res, next) => {
             data: {
                 userId: req.user?.id,
                 action: `${req.method}_${req.originalUrl}`,
-                details: {
+                details: JSON.stringify({
                     type: 'API_REQUEST',
                     method: req.method,
                     url: req.originalUrl,
@@ -25,7 +25,7 @@ export const hipaaLogger = (req, res, next) => {
                     responseBody: responseBody,
                     headers: req.headers,
                     ip: req.ip
-                }
+                })
             }
         }).catch(err => console.error('Error creating audit log:', err));
         return oldEnd.apply(res, arguments);

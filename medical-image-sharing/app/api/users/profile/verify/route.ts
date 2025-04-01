@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
+import { auth } from '@clerk/nextjs/server';
 import { z } from 'zod';
 import { getErrorResponse } from '@/lib/api/error-handler';
-import { authOptions } from '../../../auth/[...nextauth]/route';
 import { prisma } from '@/lib/db';
 
 // Schema for validation
@@ -16,9 +15,9 @@ const verifySchema = z.object({
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify user authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Verify user authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to verify attributes' },
         { status: 401 }
@@ -31,7 +30,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Get the user
     const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { authId: userId },
     });
 
     if (!user) {
@@ -44,7 +43,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // In a real implementation, we'd verify against a verification code table
     // Since we don't have a specific verification code model, we simulate verification here
     
-    // For email verification, update the emailVerified fieldd
+    // For email verification, update the emailVerified field
     if (type === 'email') {
       await prisma.user.update({
         where: { id: user.id },

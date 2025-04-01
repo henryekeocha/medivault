@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { auth } from '@clerk/nextjs/server';
 import prisma from '@/lib/prisma';
 import { hipaaLogger } from '@/lib/hipaa';
 
@@ -60,9 +59,19 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Get the authenticated user from the database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -125,7 +134,7 @@ export async function GET(
 
     await hipaaLogger.log({
       action: 'CHECK_PROVIDER_AVAILABILITY',
-      userId: session.user.id,
+      userId: user.id,
       resourceId: provider.id,
       details: `Checked availability for provider ${provider.name}`,
     });

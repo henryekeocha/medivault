@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
+import { auth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/db';
-import { authOptions, UserRole } from '@/lib/auth/auth-options';
 import { getErrorResponse } from '@/lib/api/error-handler';
 import { getPresignedDownloadUrl } from '@/lib/api/s3-api';
 
@@ -19,17 +18,22 @@ enum VerificationStatus {
 export async function GET(req: NextRequest) {
   try {
     // Get the authenticated user
-    const session = await getServerSession(authOptions);
+    const { userId } = await auth();
     
-    if (!session || !session.user) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
+
+    // Get the user from the database to check role
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
     
-    // Check if the user is an admin
-    if (session.user.role !== UserRole.ADMIN) {
+    if (!user || user.role !== 'ADMIN') {
       return NextResponse.json(
         { error: 'Only administrators can access this endpoint' },
         { status: 403 }

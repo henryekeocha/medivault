@@ -33,7 +33,7 @@ import {
   DialogContentText,
   RadioGroup,
   Radio,
-  FormControlLabel,
+  FormControlLabel, 
 } from '@mui/material';
 import { 
   Search as SearchIcon, 
@@ -43,28 +43,31 @@ import {
   Download as DownloadIcon,
   Clear as ClearIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
+import { AuditLog } from '@/lib/api/types';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { Role } from '@prisma/client';
+import { ClerkAuthService } from '@/lib/clerk/auth-service';
 
 interface ActivityLog {
   id: string;
   userId: string;
-  userName: string;
   action: string;
+  details?: Record<string, any>;
+  user?: { name: string; } | null;
+  userName: string;
   actionType: string;
   description: string;
   ipAddress: string;
   timestamp: string;
-  metadata?: any;
 }
 
 export default function AuditLogsPage() {
   const router = useRouter();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isLoaded } = useUser();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>('');
   const [logs, setLogs] = useState<ActivityLog[]>([]);
@@ -99,8 +102,6 @@ export default function AuditLogsPage() {
     setError('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      
       const params: any = {
         page: page,
         limit: limit
@@ -111,10 +112,23 @@ export default function AuditLogsPage() {
       if (startDate) params.startDate = startDate.toISOString();
       if (endDate) params.endDate = endDate.toISOString();
       
-      const response = await apiClient.getActivityLogs(params);
+      const response = await adminClient.getAuditLogs(params);
       
       if (response.status === 'success') {
-        setLogs(response.data.data || []);
+        // Map AuditLog to ActivityLog
+        const activityLogs: ActivityLog[] = (response.data.data || []).map(log => ({
+          id: log.id,
+          userId: log.userId,
+          action: log.action,
+          details: log.details,
+          user: log.user,
+          userName: log.user?.name || 'Unknown',
+          actionType: log.action,
+          description: log.details?.description || log.action,
+          ipAddress: log.details?.ipAddress || 'Unknown',
+          timestamp: new Date(log.timestamp).toISOString()
+        }));
+        setLogs(activityLogs);
         setTotalLogs(response.data.pagination.total);
       } else {
         setError(response.error?.message || 'Failed to fetch activity logs');
@@ -129,18 +143,21 @@ export default function AuditLogsPage() {
   
   // Check if user is authorized and fetch logs
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isLoaded) return;
+
+    if (!user) {
       router.push('/auth/login');
       return;
     }
 
-    if (user?.role !== Role.ADMIN) {
+    // Check user role
+    const userRole = user.publicMetadata.role;
+    if (userRole !== Role.ADMIN) {
       router.push('/dashboard');
       return;
     }
-    
     fetchLogs();
-  }, [isAuthenticated, user?.role, router, page, limit]);
+  }, [isLoaded, user, router]);
   
   // Handle search when the search term changes (with debounce)
   useEffect(() => {
@@ -223,10 +240,9 @@ export default function AuditLogsPage() {
     setExportError(null);
     
     try {
-      const apiClient = ApiClient.getInstance();
-      
       const exportParams: any = {
-        format: exportFormat
+        format: exportFormat,
+        export: true
       };
       
       // Add date range if selected
@@ -235,11 +251,7 @@ export default function AuditLogsPage() {
         if (exportEndDate) exportParams.endDate = exportEndDate.toISOString();
       }
       
-      // Call the export API - update to use getAuditLogs with export flag
-      const response = await apiClient.getAuditLogs({
-        ...exportParams,
-        export: true
-      });
+      const response = await adminClient.getAuditLogs(exportParams);
       
       if (response.status === 'success') {
         // Convert the response data to a string if it's not already
@@ -408,7 +420,7 @@ export default function AuditLogsPage() {
                       label="Start Date"
                       value={startDate}
                       onChange={(newValue: Date | null) => handleFilterChange('startDate', newValue)}
-                      renderInput={(params) => <TextField {...params} fullWidth />}
+                      slotProps={{ textField: { fullWidth: true } }}
                     />
                   </Grid>
                   <Grid item xs={12} md={4}>
@@ -416,7 +428,7 @@ export default function AuditLogsPage() {
                       label="End Date"
                       value={endDate}
                       onChange={(newValue: Date | null) => handleFilterChange('endDate', newValue)}
-                      renderInput={(params) => <TextField {...params} fullWidth />}
+                      slotProps={{ textField: { fullWidth: true } }}
                     />
                   </Grid>
                   <Grid item xs={12}>
@@ -555,7 +567,7 @@ export default function AuditLogsPage() {
                   </Grid>
                   <Grid item xs={12} sm={6}>
                     <Typography variant="subtitle2">Timestamp</Typography>
-                    <Typography variant="body2" gutterBottom>{formatTimestamp(selectedLog.timestamp)}</Typography>
+                    <Typography variant="body2" gutterBottom>{selectedLog.timestamp}</Typography>
                   </Grid>
                   <Grid item xs={12} sm={6}>
                     <Typography variant="subtitle2">User</Typography>
@@ -581,12 +593,12 @@ export default function AuditLogsPage() {
                     <Typography variant="subtitle2">IP Address</Typography>
                     <Typography variant="body2" gutterBottom>{selectedLog.ipAddress}</Typography>
                   </Grid>
-                  {selectedLog.metadata && (
+                  {selectedLog.details && (
                     <Grid item xs={12}>
-                      <Typography variant="subtitle2">Metadata</Typography>
+                      <Typography variant="subtitle2">Details</Typography>
                       <Paper sx={{ p: 2, backgroundColor: '#f5f5f5' }}>
                         <pre style={{ margin: 0, overflow: 'auto' }}>
-                          {JSON.stringify(selectedLog.metadata, null, 2)}
+                          {JSON.stringify(selectedLog.details, null, 2)}
                         </pre>
                       </Paper>
                     </Grid>
@@ -639,21 +651,25 @@ export default function AuditLogsPage() {
               
               {exportDateRange === 'custom' && (
                 <Grid container spacing={2} sx={{ mt: 1 }}>
-                  <Grid item xs={12} sm={6}>
-                    <DatePicker
-                      label="Start Date"
-                      value={exportStartDate}
-                      onChange={(newValue: Date | null) => setExportStartDate(newValue)}
-                      renderInput={(params) => <TextField {...params} fullWidth size="small" />}
-                    />
+                  <Grid item xs={12} md={4}>
+                    <Box sx={{ width: '100%' }}>
+                      <DatePicker
+                        label="Start Date"
+                        value={exportStartDate}
+                        onChange={(newValue: Date | null) => setExportStartDate(newValue)}
+                        slotProps={{ textField: { fullWidth: true, size: "small" } }}
+                      />
+                    </Box>
                   </Grid>
-                  <Grid item xs={12} sm={6}>
-                    <DatePicker
-                      label="End Date"
-                      value={exportEndDate}
-                      onChange={(newValue: Date | null) => setExportEndDate(newValue)}
-                      renderInput={(params) => <TextField {...params} fullWidth size="small" />}
-                    />
+                  <Grid item xs={12} md={4}>
+                    <Box sx={{ width: '100%' }}>
+                      <DatePicker
+                        label="End Date"
+                        value={exportEndDate}
+                        onChange={(newValue: Date | null) => setExportEndDate(newValue)}
+                        slotProps={{ textField: { fullWidth: true, size: "small" } }}
+                      />
+                    </Box>
                   </Grid>
                 </Grid>
               )}

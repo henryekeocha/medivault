@@ -1,27 +1,25 @@
-import express from 'express';
-import multer from 'multer';
-import * as fileController from '../controllers/file.controller.js';
-import { protect } from '../middleware/auth.js';
-import { encryptResponse, decryptRequest, hipaaLogger } from '../middleware/encryption.js';
-const router = express.Router();
-// Configure multer for memory storage
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: {
-        fileSize: 50 * 1024 * 1024, // 50MB limit
-    },
-});
-// Apply protection and HIPAA logging to all routes
+import { Router } from 'express';
+import { protect } from '../middleware/clerk.js';
+import { uploadFile, downloadFile, deleteFile } from '../controllers/file.controller.js';
+const router = Router();
+// Apply protection middleware to all routes
 router.use(protect);
-router.use(hipaaLogger);
-// Apply encryption middleware in production
-if (process.env.NODE_ENV === 'production') {
-    router.use(decryptRequest);
-    router.use(encryptResponse);
-}
-// File routes
-router.post('/upload', upload.single('file'), fileController.uploadFile);
-router.get('/download/:fileId', fileController.downloadFile);
-router.delete('/:fileId', fileController.deleteFile);
+// File upload routes
+router.route('/upload')
+    .post(uploadFile);
+// File management routes
+router.route('/')
+    .get((req, res, next) => res.status(501).json({ message: 'Not implemented' }))
+    .post((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
+router.route('/:id')
+    .get(downloadFile)
+    .put((req, res, next) => res.status(501).json({ message: 'Not implemented' }))
+    .delete(deleteFile);
+// File sharing routes
+router.route('/:id/share')
+    .post((req, res, next) => res.status(501).json({ message: 'Not implemented' }))
+    .get((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
+router.route('/:id/unshare')
+    .post((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
 export default router;
 //# sourceMappingURL=files.js.map

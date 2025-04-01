@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
+import { auth } from '@clerk/nextjs/server';
 import { z } from 'zod';
 import { getErrorResponse } from '@/lib/api/error-handler';
-import { authOptions } from '../../../auth/[...nextauth]/route';
 import { prisma } from '@/lib/db';
 
 // Schema for validation
@@ -22,12 +21,25 @@ function generateVerificationCode(): string {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify user authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Verify user authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to request verification' },
         { status: 401 }
+      );
+    }
+
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Not Found', message: 'User not found' },
+        { status: 404 }
       );
     }
 
@@ -36,12 +48,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const { type } = requestSchema.parse(body);
 
     // Get the user with profile
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+    const userWithProfile = await prisma.user.findUnique({
+      where: { id: user.id },
       include: { profile: true }
     });
 
-    if (!user) {
+    if (!userWithProfile) {
       return NextResponse.json(
         { error: 'Not Found', message: 'User not found' },
         { status: 404 }

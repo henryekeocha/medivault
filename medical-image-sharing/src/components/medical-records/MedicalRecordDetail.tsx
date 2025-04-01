@@ -28,7 +28,7 @@ import {
   Close as CloseIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { apiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api';
 import { MedicalRecord } from '@/lib/api/types';
 import { formatDate } from '@/lib/utils/dateUtils';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
@@ -63,40 +63,38 @@ export function MedicalRecordDetail({ record, onClose }: MedicalRecordDetailProp
   const [loading, setLoading] = useState(false);
   const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);
   const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'json'>('pdf');
-  const { error, handleError, clearError, withErrorHandling } = useErrorHandler({
+  const { error, handleError, clearError } = useErrorHandler({
     context: 'Medical Record Detail',
     showToastByDefault: true
   });
   
   const handleDownload = async () => {
-    await withErrorHandling(async () => {
+    try {
       setLoading(true);
+      clearError();
       
-      try {
-        const blob = await apiClient.downloadMedicalRecord(record.id, downloadFormat);
-        
-        // Create a URL for the blob
-        const url = window.URL.createObjectURL(blob);
-        
-        // Create a link element to trigger the download
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `medical-record-${record.id}.${downloadFormat}`;
-        document.body.appendChild(a);
-        a.click();
-        
-        // Clean up
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        
-        setIsDownloadDialogOpen(false);
-      } finally {
-        setLoading(false);
-      }
-    }, {
-      showToast: true,
-      successMessage: `Record downloaded successfully in ${downloadFormat.toUpperCase()} format`
-    });
+      const blob = await patientClient.downloadMedicalRecord(record.id, downloadFormat);
+      
+      // Create a URL for the blob
+      const url = window.URL.createObjectURL(blob);
+      
+      // Create a link element to trigger the download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `medical-record-${record.id}.${downloadFormat}`;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      setIsDownloadDialogOpen(false);
+    } catch (err) {
+      handleError(err);
+    } finally {
+      setLoading(false);
+    }
   };
   
   const handlePrint = () => {

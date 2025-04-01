@@ -11,8 +11,6 @@ export interface User {
   emailVerified?: Date;
   image?: string;
   isActive: boolean;
-  twoFactorEnabled: boolean;
-  twoFactorSecret?: string;
   lastLoginAt?: Date;
   lastLoginIp?: string;
   createdAt: Date;

@@ -17,69 +17,48 @@ import {
   Card,
   CardContent
 } from '@mui/material';
-import { signIn, signOut, useSession } from 'next-auth/react';
+import { useAuth, useUser } from '@clerk/nextjs';
 
 export default function DebugPage() {
-  const [email, setEmail] = useState('test@example.com');
-  const [password, setPassword] = useState('Password123!');
   const [logs, setLogs] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [debugResult, setDebugResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   
-  // Get session data from NextAuth
-  const { data: session, status } = useSession();
+  // Get auth data from Clerk
+  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { user } = useUser();
   
   const addLog = (message: string) => {
     setLogs(prev => [...prev, `${new Date().toISOString().split('T')[1].split('.')[0]} - ${message}`]);
   };
   
-  const testSession = () => {
+  const testAuth = () => {
     try {
-      addLog(`Testing NextAuth session...`);
-      addLog(`Session status: ${status}`);
-      addLog(`User logged in: ${!!session}`);
+      addLog(`Testing Clerk auth...`);
+      addLog(`Auth loaded: ${isLoaded}`);
+      addLog(`User signed in: ${isSignedIn}`);
       
-      if (session) {
-        addLog(`User email: ${session.user?.email}`);
-        addLog(`User name: ${session.user?.name}`);
+      if (user) {
+        addLog(`User email: ${user.primaryEmailAddress?.emailAddress}`);
+        addLog(`User name: ${user.fullName}`);
+        addLog(`User ID: ${user.id}`);
       }
       
-      setDebugResult(session);
-    } catch (error: any) {
-      console.error('Error testing session:', error);
-      addLog(`ERROR: ${error.message}`);
-      setError(error.message);
-    }
-  };
-  
-  const testSignIn = async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      addLog(`Testing sign-in with email: ${email}`);
-      
-      const result = await signIn('credentials', {
-        redirect: false,
-        email,
-        password
+      setDebugResult({
+        isLoaded,
+        isSignedIn,
+        user: user ? {
+          id: user.id,
+          email: user.primaryEmailAddress?.emailAddress,
+          name: user.fullName,
+          imageUrl: user.imageUrl,
+        } : null
       });
-      
-      if (result?.error) {
-        addLog(`Sign-in failed: ${result.error}`);
-        setError(result.error);
-      } else {
-        addLog(`Sign-in successful!`);
-      }
-      
-      setDebugResult(result);
     } catch (error: any) {
-      console.error('Sign-in error:', error);
+      console.error('Error testing auth:', error);
       addLog(`ERROR: ${error.message}`);
       setError(error.message);
-    } finally {
-      setIsLoading(false);
     }
   };
   
@@ -90,7 +69,7 @@ export default function DebugPage() {
     try {
       addLog(`Testing sign-out...`);
       
-      await signOut({ redirect: false });
+      await signOut();
       
       addLog(`Sign-out successful!`);
       setDebugResult({ success: true });
@@ -110,7 +89,7 @@ export default function DebugPage() {
     try {
       addLog(`Testing API auth route...`);
       
-      const response = await fetch('/api/auth/session');
+      const response = await fetch('/api/auth/me');
       const data = await response.json();
       
       addLog(`API call successful!`);
@@ -124,22 +103,22 @@ export default function DebugPage() {
     }
   };
   
-  // Log initial session information on component mount
+  // Log initial auth information on component mount
   useEffect(() => {
-    addLog(`Initial session status: ${status}`);
-    if (status === 'authenticated' && session) {
-      addLog(`Logged in as: ${session.user?.email}`);
+    addLog(`Initial auth loaded: ${isLoaded}`);
+    if (isLoaded && isSignedIn && user) {
+      addLog(`Logged in as: ${user.primaryEmailAddress?.emailAddress}`);
     }
-  }, [session, status]);
+  }, [isLoaded, isSignedIn, user]);
   
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Typography variant="h4" gutterBottom>
-        NextAuth.js Debugging Page
+        Clerk Authentication Debug Page
       </Typography>
       
       <Typography variant="body1" paragraph>
-        This page helps diagnose issues with NextAuth.js authentication and session management.
+        This page helps diagnose issues with Clerk authentication and user session management.
       </Typography>
       
       {error && (
@@ -152,12 +131,12 @@ export default function DebugPage() {
         <Card sx={{ width: '100%', mb: 3 }}>
           <CardContent>
             <Typography variant="h6" gutterBottom>
-              Current Session Status: <strong>{status}</strong>
+              Current Auth Status: <strong>{isLoaded ? 'Loaded' : 'Loading'}</strong>
             </Typography>
-            {session && (
+            {user && (
               <Box>
                 <Typography variant="body1">
-                  User: {session.user?.name} ({session.user?.email})
+                  User: {user.fullName} ({user.primaryEmailAddress?.emailAddress})
                 </Typography>
               </Box>
             )}
@@ -166,32 +145,16 @@ export default function DebugPage() {
         
         <Paper sx={{ p: 3, width: '100%', mb: 3 }}>
           <Typography variant="h6" gutterBottom>
-            1. Test Credentials
+            1. Test Authentication
           </Typography>
-          
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 2 }}>
-            <TextField 
-              label="Email" 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              fullWidth
-            />
-            <TextField 
-              label="Password" 
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              fullWidth
-            />
-          </Box>
           
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             <Button 
               variant="contained" 
-              onClick={testSignIn}
+              onClick={testAuth}
               disabled={isLoading}
             >
-              {isLoading ? <CircularProgress size={24} /> : 'Test Sign In'}
+              {isLoading ? <CircularProgress size={24} /> : 'Test Auth'}
             </Button>
             
             <Button 
@@ -200,14 +163,6 @@ export default function DebugPage() {
               disabled={isLoading}
             >
               Test Sign Out
-            </Button>
-            
-            <Button 
-              variant="outlined" 
-              onClick={testSession}
-              disabled={isLoading}
-            >
-              Check Session
             </Button>
             
             <Button 

@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { protect } from '../middleware/auth.js';
-import { restrictTo } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
+import { restrictTo } from '../middleware/clerk.js';
 import { userController } from '../controllers/user.controller.js';
 import { Role } from '@prisma/client';
 import type { RequestHandler } from 'express';
@@ -15,8 +15,8 @@ router.route('/profile')
   .get(userController.getProfile as RequestHandler)
   .put(userController.updateProfile as RequestHandler);
 
-// Restrict user management routes to Provider
-router.use(restrictTo(Role.PROVIDER) as RequestHandler);
+// Restrict user management routes to Provider and Admin
+router.use(restrictTo(Role.PROVIDER, Role.ADMIN) as RequestHandler);
 
 // User management routes
 router.route('/')

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AppError } from '../utils/appError.js';
 import { AuthUser } from '../types/models.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 
 // Use the AuthenticatedRequest from auth.ts instead of defining a new interface
 import { AuthenticatedRequest } from '../types/auth.js';

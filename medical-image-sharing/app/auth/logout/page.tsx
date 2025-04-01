@@ -2,28 +2,19 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@clerk/nextjs';
 import { routes } from '@/config/routes';
 import type { Route } from 'next';
-import { signOut } from 'next-auth/react';
 
 export default function LogoutPage() {
   const router = useRouter();
-  const { setAuth } = useAuth();
+  const { signOut } = useAuth();
 
   useEffect(() => {
     const handleLogout = async () => {
       try {
-        // Use NextAuth signOut
-        await signOut({ redirect: false });
-
-        // Clear auth context
-        if (setAuth) {
-          setAuth({
-            isAuthenticated: false,
-            user: null
-          });
-        }
+        // Use Clerk signOut
+        await signOut();
 
         // Redirect to login page using the route from our configuration
         router.push(routes.root.login as Route);
@@ -35,7 +26,7 @@ export default function LogoutPage() {
     };
 
     handleLogout();
-  }, [router, setAuth]);
+  }, [router, signOut]);
 
   return (
     <div className="flex items-center justify-center min-h-screen">

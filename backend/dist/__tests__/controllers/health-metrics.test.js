@@ -1,15 +1,31 @@
 import request from 'supertest';
 import app from '../../app.js';
-import { prisma } from '../../lib/prisma.js';
+import prisma from '../../lib/prisma.js';
 import { Role } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import { clerkClient } from '@clerk/clerk-sdk-node';
+// Mock Clerk client
+jest.mock('@clerk/clerk-sdk-node', () => ({
+    clerkClient: {
+        sessions: {
+            getSession: jest.fn()
+        },
+        users: {
+            getUser: jest.fn()
+        }
+    }
+}));
 describe('Health Metrics Controller', () => {
     let providerToken;
     let patientToken;
     let providerId;
     let patientId;
+    let providerAuthId;
+    let patientAuthId;
     beforeEach(async () => {
+        // Mock auth IDs
+        providerAuthId = 'provider_auth_id';
+        patientAuthId = 'patient_auth_id';
         // Create a provider and patient user
         const provider = await prisma.user.create({
             data: {
@@ -17,7 +33,8 @@ describe('Health Metrics Controller', () => {
                 email: 'provider@example.com',
                 password: await bcrypt.hash('Password123!', 10),
                 role: Role.PROVIDER,
-                username: 'testprovider'
+                username: 'testprovider',
+                authId: providerAuthId // Add authId for Clerk integration
             }
         });
         const patient = await prisma.user.create({
@@ -26,19 +43,51 @@ describe('Health Metrics Controller', () => {
                 email: 'patient@example.com',
                 password: await bcrypt.hash('Password123!', 10),
                 role: Role.PATIENT,
-                username: 'testpatient'
+                username: 'testpatient',
+                authId: patientAuthId // Add authId for Clerk integration
             }
         });
         providerId = provider.id;
         patientId = patient.id;
-        // Generate tokens
-        providerToken = jwt.sign({ id: provider.id }, process.env.JWT_SECRET);
-        patientToken = jwt.sign({ id: patient.id }, process.env.JWT_SECRET);
+        // Set up tokens (these don't need to be real JWT tokens anymore)
+        providerToken = `session_provider_${providerId}`;
+        patientToken = `session_patient_${patientId}`;
+        // Set up Clerk mocks
+        clerkClient.sessions.getSession.mockImplementation((token) => {
+            if (token === providerToken) {
+                return Promise.resolve({
+                    status: 'active',
+                    userId: providerAuthId
+                });
+            }
+            else if (token === patientToken) {
+                return Promise.resolve({
+                    status: 'active',
+                    userId: patientAuthId
+                });
+            }
+            return Promise.resolve(null);
+        });
+        clerkClient.users.getUser.mockImplementation((authId) => {
+            if (authId === providerAuthId) {
+                return Promise.resolve({
+                    id: providerAuthId,
+                    emailAddresses: [{ emailAddress: 'provider@example.com' }]
+                });
+            }
+            else if (authId === patientAuthId) {
+                return Promise.resolve({
+                    id: patientAuthId,
+                    emailAddresses: [{ emailAddress: 'patient@example.com' }]
+                });
+            }
+            return Promise.resolve(null);
+        });
     });
     describe('POST /api/health-metrics', () => {
         it('should create a new health metric', async () => {
             const metricData = {
-                type: 'BLOOD_PRESSURE',
+                type: 'VITAL_SIGNS',
                 value: '120/80',
                 unit: 'mmHg',
                 notes: 'Regular checkup',
@@ -56,7 +105,7 @@ describe('Health Metrics Controller', () => {
         });
         it('should not create a metric without proper authorization', async () => {
             const metricData = {
-                type: 'BLOOD_PRESSURE',
+                type: 'VITAL_SIGNS',
                 value: '120/80',
                 unit: 'mmHg',
                 patientId: patientId
@@ -72,7 +121,7 @@ describe('Health Metrics Controller', () => {
             // Create some test metrics
             await prisma.healthMetric.create({
                 data: {
-                    type: 'BLOOD_PRESSURE',
+                    type: 'VITAL_SIGNS',
                     value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
@@ -103,7 +152,7 @@ describe('Health Metrics Controller', () => {
             // Create a test metric
             const metric = await prisma.healthMetric.create({
                 data: {
-                    type: 'BLOOD_PRESSURE',
+                    type: 'VITAL_SIGNS',
                     value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
@@ -133,7 +182,7 @@ describe('Health Metrics Controller', () => {
             // Create a test metric
             const metric = await prisma.healthMetric.create({
                 data: {
-                    type: 'BLOOD_PRESSURE',
+                    type: 'VITAL_SIGNS',
                     value: 120,
                     unit: 'mmHg',
                     patientId: patientId,
@@ -163,7 +212,7 @@ describe('Health Metrics Controller', () => {
             // Create a test metric
             const metric = await prisma.healthMetric.create({
                 data: {
-                    type: 'BLOOD_PRESSURE',
+                    type: 'VITAL_SIGNS',
                     value: 120,
                     unit: 'mmHg',
                     patientId: patientId,

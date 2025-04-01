@@ -17,9 +17,12 @@ interface ProviderStatistics {
   totalImages: number;
   totalShares: number;
   recentActivity: Array<{
-    type: string;
+    id: string;
+    action: string;
+    resourceType: string | null;
+    resourceId: string | null;
     timestamp: Date;
-    details: any;
+    metadata: any;
   }>;
 }
 
@@ -145,19 +148,21 @@ export class AnalyticsService {
           return 0;
         }),
         // Get total downloads
-        this.prisma.fileAccessLog.count({
+        this.prisma.userActivity.count({
           where: { 
             userId,
-            accessType: 'DOWNLOAD'
+            action: 'DOWNLOAD'
           }
         }).catch(error => {
           console.error('Error fetching downloads:', error);
           return 0;
         }),
-        // Get total storage used
+        // Get storage used
         this.prisma.image.aggregate({
           where: { userId },
-          _sum: { fileSize: true }
+          _sum: {
+            fileSize: true
+          }
         }).catch(error => {
           console.error('Error fetching storage:', error);
           return { _sum: { fileSize: 0 } };
@@ -166,7 +171,15 @@ export class AnalyticsService {
         this.prisma.userActivity.findMany({
           where: { userId },
           orderBy: { timestamp: 'desc' },
-          take: 10
+          take: 10,
+          include: {
+            user: {
+              select: {
+                name: true,
+                image: true
+              }
+            }
+          }
         }).catch(error => {
           console.error('Error fetching activity:', error);
           return [];
@@ -179,14 +192,14 @@ export class AnalyticsService {
               { doctorId: userId }
             ]
           },
-          orderBy: { startTime: 'desc' }
+          orderBy: { datetime: 'desc' }
         }).catch(error => {
           console.error('Error fetching appointments:', error);
           return [];
         }),
         // Get messages
         this.prisma.message.findMany({
-          where: {
+          where: { 
             OR: [
               { senderId: userId },
               { recipientId: userId }
@@ -211,12 +224,12 @@ export class AnalyticsService {
           return [];
         }),
         // Get recent views
-        this.prisma.fileAccessLog.findMany({
+        this.prisma.userActivity.findMany({
           where: { 
             userId,
-            accessType: 'VIEW'
+            action: 'VIEW'
           },
-          orderBy: { accessTimestamp: 'desc' },
+          orderBy: { timestamp: 'desc' },
           take: 10
         }).catch(error => {
           console.error('Error fetching recent views:', error);
@@ -237,11 +250,11 @@ export class AnalyticsService {
         number,
         number,
         { _sum: { fileSize: number } },
-        Array<{ id: string; userId: string; timestamp: Date; type: string; details: any }>,
-        Array<{ id: string; startTime: Date; endTime: Date; status: string }>,
+        Array<{ id: string; userId: string; timestamp: Date; action: string; resourceType: string | null; resourceId: string | null; metadata: any; user: { name: string; image: string | null } }>,
+        Array<{ id: string; datetime: Date; status: string }>,
         Array<{ id: string; readAt: Date | null }>,
         Array<{ id: string; updatedAt: Date }>,
-        Array<{ id: string }>
+        Array<{ id: string; timestamp: Date; resourceId: string | null }>
       ];
 
       console.log('Successfully fetched all metrics:', {
@@ -255,55 +268,49 @@ export class AnalyticsService {
         recentViewsCount: recentViews.length
       });
 
-      // Calculate derived metrics
-      const now = new Date();
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-      const upcomingAppointments = appointments.filter(apt => 
-        apt.startTime > now && apt.status === 'SCHEDULED'
-      ).length;
-
-      const pastAppointments = appointments.filter(apt => 
-        apt.endTime < now
-      ).length;
-
-      const unreadMessages = messages.filter(msg => !msg.readAt).length;
-
-      const recentlyUpdatedRecords = records.filter(record => 
-        record.updatedAt > thirtyDaysAgo
-      ).length;
-
-      const recentlyUploadedImages = uploads;
-
-      const recentlyViewed = recentViews.length;
-
       // Format recent activity
       const formattedActivity = activity.map(act => ({
         id: act.id,
-        user: act.userId,
-        action: act.type,
+        user: act.user.name,
+        action: act.action,
         time: act.timestamp.toISOString(),
-        avatar: '/avatars/system.jpg',
-        details: act.details as Record<string, any>
+        avatar: act.user.image || '',
+        details: act.metadata || {}
       }));
 
-      // Return the metrics in the format expected by the frontend
-      const metrics = {
-        appointments: {
-          total: appointments.length,
-          upcoming: upcomingAppointments,
-          completed: pastAppointments,
-          cancelled: appointments.filter(apt => apt.status === 'CANCELLED').length
-        },
+      // Calculate appointment metrics
+      const now = new Date();
+      const appointmentMetrics = {
+        total: appointments.length,
+        upcoming: appointments.filter(apt => apt.datetime > now && apt.status !== 'CANCELLED').length,
+        completed: appointments.filter(apt => apt.status === 'COMPLETED').length,
+        cancelled: appointments.filter(apt => apt.status === 'CANCELLED').length
+      };
+
+      // Calculate message metrics
+      const messageMetrics = {
+        total: messages.length,
+        unread: messages.filter(msg => !msg.readAt).length
+      };
+
+      // Calculate recent uploads (last 7 days)
+      const recentUploads = await this.prisma.image.count({
+        where: {
+          userId,
+          uploadDate: {
+            gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+          }
+        }
+      });
+
+      const metrics: UserMetrics = {
+        appointments: appointmentMetrics,
         images: {
           total: uploads,
-          recentUploads: recentlyUploadedImages,
+          recentUploads,
           storageUsed: `${(storage._sum.fileSize || 0) / (1024 * 1024)} MB`
         },
-        messages: {
-          total: messages.length,
-          unread: unreadMessages
-        },
+        messages: messageMetrics,
         recentActivity: formattedActivity
       };
 
@@ -327,8 +334,10 @@ export class AnalyticsService {
       await this.prisma.userActivity.create({
         data: {
           userId,
-          type: action,
-          details: { fileId },
+          action,
+          resourceType: 'file',
+          resourceId: fileId,
+          metadata: { fileId },
           timestamp: new Date()
         }
       });
@@ -356,15 +365,14 @@ export class AnalyticsService {
     try {
       return await this.prisma.userActivity.findMany({
         where: {
-          type: 'FILE_ACCESS',
-          details: {
-            path: ['fileId'],
-            equals: fileId
-          }
+          action: 'FILE_ACCESS',
+          resourceType: 'file',
+          resourceId: fileId
         },
         select: {
           timestamp: true,
-          type: true,
+          action: true,
+          metadata: true,
           user: {
             select: {
               name: true,
@@ -429,9 +437,12 @@ export class AnalyticsService {
         },
         take: 10,
         select: {
-          type: true,
+          id: true,
+          action: true,
+          resourceType: true,
+          resourceId: true,
           timestamp: true,
-          details: true
+          metadata: true
         }
       });
 

@@ -35,9 +35,10 @@ import {
   ContentCopy as CopyIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
-import { Image as BaseImage } from '@/lib/api/types';
+import { providerClient } from '@/lib/api/providerClient';
+import { useUser } from '@clerk/nextjs';
+import { Image as BaseImage, SharedImage, ImageShareOptions } from '@/lib/api/types';
+import { User } from '@prisma/client';
 
 // Extend the Image type to include the name property we add locally
 interface Image extends BaseImage {
@@ -47,15 +48,8 @@ interface Image extends BaseImage {
 interface Patient {
   id: string;
   name: string;
-}
-
-interface SharedImage {
-  id: string;
-  name: string;
-  sharedWith: string;
-  expiryDate: string;
-  accessCount: number;
-  link: string;
+  email: string;
+  status: string;
 }
 
 interface PaginatedResponse<T> {
@@ -69,7 +63,7 @@ interface PaginatedResponse<T> {
 }
 
 export default function ProviderSharePage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const [selectedPatient, setSelectedPatient] = useState('');
   const [selectedImage, setSelectedImage] = useState('');
   const [expiryDays, setExpiryDays] = useState('7');
@@ -97,10 +91,12 @@ export default function ProviderSharePage() {
 
   // Fetch patients, images, and shared images on component mount
   useEffect(() => {
+    if (!isLoaded || !user) return;
+    
     fetchPatients();
     fetchImages();
     fetchSharedImages();
-  }, []);
+  }, [isLoaded, user]);
 
   // Filter images based on selected patient
   useEffect(() => {
@@ -118,11 +114,18 @@ export default function ProviderSharePage() {
   const fetchPatients = async () => {
     try {
       setLoading(prev => ({ ...prev, patients: true }));
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getProviderPatients();
+      const response = await providerClient.getPatients();
       
       if (response.status === 'success') {
-        setPatients(response.data);
+        // Handle paginated response
+        const paginatedData = response.data as unknown as PaginatedResponse<User>;
+        const patients = paginatedData.data.map((patient: User) => ({
+          id: patient.id,
+          name: patient.name || 'Unnamed Patient',
+          email: patient.email,
+          status: patient.role
+        }));
+        setPatients(patients);
       } else {
         console.error('Failed to fetch patients:', response);
         setError('Failed to load patients');
@@ -138,8 +141,7 @@ export default function ProviderSharePage() {
   const fetchImages = async () => {
     try {
       setLoading(prev => ({ ...prev, images: true }));
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getProviderImages();
+      const response = await providerClient.getImages();
       
       if (response.status === 'success') {
         // Handle paginated response
@@ -166,13 +168,19 @@ export default function ProviderSharePage() {
   const fetchSharedImages = async () => {
     try {
       setLoading(prev => ({ ...prev, sharedImages: true }));
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getProviderSharedImages();
+      const response = await providerClient.getShares();
       
       if (response.status === 'success') {
-        // Handle paginated response
-        const paginatedData = response.data as unknown as PaginatedResponse<SharedImage>;
-        const sharedImages = paginatedData.data || [];
+        // Map Share data to SharedImage type
+        const shares = response.data || [];
+        const sharedImages = shares.map(share => ({
+          id: share.id,
+          name: share.image?.filename || `Image ${share.id}`,
+          sharedWith: share.sharedWithUser?.name || 'Unknown User',
+          expiryDate: share.expiresAt?.toISOString() || '',
+          accessCount: share.accessCount,
+          link: share.shareUrl || ''
+        }));
         setSharedImages(sharedImages);
       } else {
         console.error('Failed to fetch shared images:', response);
@@ -206,17 +214,17 @@ export default function ProviderSharePage() {
     
     try {
       setLoading(prev => ({ ...prev, sharing: true }));
-      const apiClient = ApiClient.getInstance();
       
-      const response = await apiClient.createImageShare({
-        providerId: user?.id,
+      const shareOptions: ImageShareOptions = {
         patientId: selectedPatient,
         imageId: selectedImage,
         expiryDays: parseInt(expiryDays),
         requireConsent,
         watermarkEnabled,
         allowDownload: downloadEnabled,
-      });
+      };
+      
+      const response = await providerClient.shareImage(shareOptions);
       
       if (response.status === 'success') {
         setNotification({
@@ -263,8 +271,7 @@ export default function ProviderSharePage() {
 
   const confirmRevokeAccess = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.revokeImageShare(confirmDialog.shareId);
+      const response = await providerClient.revokeShare(confirmDialog.shareId);
       
       if (response.status === 'success') {
         setNotification({

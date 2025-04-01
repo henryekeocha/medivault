@@ -1,5 +1,5 @@
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { Role } from '@prisma/client';
 import { catchAsync } from '../utils/catchAsync.js';
 import { encryptData, decryptData } from '../middleware/encryption.js';

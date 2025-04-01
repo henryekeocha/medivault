@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { protect } from '../middleware/auth.js';
-import { restrictTo } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
+import { restrictTo } from '../middleware/clerk.js';
 import { hipaaLogger } from '../middleware/hipaaLogger.js';
 import { encryptResponse } from '../middleware/encryption.js';
 import { providerController } from '../controllers/provider.controller.js';
@@ -17,6 +17,10 @@ router.use(hipaaLogger as RequestHandler);
 if (process.env.NODE_ENV === 'production') {
   router.use(encryptResponse as RequestHandler);
 }
+
+// Provider directory route
+router.route('/')
+  .get(providerController.getAllProviders as RequestHandler);
 
 // Provider profile routes
 router.route('/profile')

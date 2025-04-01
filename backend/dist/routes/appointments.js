@@ -1,29 +1,17 @@
 import express from 'express';
-import * as appointmentController from '../controllers/appointment.controller.js';
-import { protect } from '../middleware/auth.js';
-import { hipaaLogger } from '../middleware/encryption.js';
-import { rateLimiter } from '../middleware/rateLimiter.js';
+import { createAppointment, listAppointments, getAppointment, updateAppointment, cancelAppointment } from '../controllers/appointment.controller.js';
+import { protect, restrictTo } from '../middleware/clerk.js';
+import { Role } from '@prisma/client';
 const router = express.Router();
-// Apply protection and HIPAA logging to all routes
-router.use('/', protect);
-router.use('/', hipaaLogger);
-// Apply rate limiting to appointment endpoints
-const appointmentRateLimit = rateLimiter({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100 // limit each IP to 100 requests per windowMs
-});
-// Appointment routes
-router.post('/', appointmentRateLimit, appointmentController.createAppointment);
-router.patch('/:id', appointmentRateLimit, appointmentController.updateAppointment);
-router.get('/', appointmentController.listAppointments);
-router.get('/:id', appointmentController.getAppointment);
-// This route doesn't exist in the controller - it needs to be implemented or removed
-// For now, we'll use a placeholder to make TypeScript happy
-router.get('/provider/:providerId/availability', ((req, res, next) => {
-    res.status(501).json({
-        status: 'error',
-        message: 'Provider availability endpoint not implemented yet'
-    });
-}));
+// All routes require authentication
+router.use(protect);
+// Routes accessible by both patients and providers
+router.get('/', listAppointments);
+router.get('/:id', getAppointment);
+// Routes restricted to providers only
+router.use(restrictTo(Role.PROVIDER));
+router.post('/', createAppointment);
+router.patch('/:id', updateAppointment);
+router.delete('/:id', cancelAppointment);
 export default router;
 //# sourceMappingURL=appointments.js.map

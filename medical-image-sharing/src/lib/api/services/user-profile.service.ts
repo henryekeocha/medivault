@@ -1,24 +1,26 @@
-import { apiClient } from '../client';
-import { UserUpdatePayload, User, UserPreferences } from '@/types/user';
+import { patientClient } from '../patientClient';
+import { providerClient } from '../providerClient';
+import { ApiResponse, User as ApiUser, UserPreferences as ApiUserPreferences } from '../types';
 import { handleApiError } from '@/lib/api/error-handler';
 import { logAudit } from '@/lib/audit-logger';
 import type { AuditEventType } from '@/lib/audit-logger';
+import { Role } from '@prisma/client';
 
 // Define a new interface for the user profile that works with Next.js Auth
 export interface UserProfile {
   id: string;
   name: string;
   email: string;
-  role: string;
+  role: Role;
   image?: string;
-  emailVerified: boolean;
+  emailVerified: boolean;  // Keep as boolean for UI purposes
   phoneNumber?: string;
   phoneVerified?: boolean;
   address?: string;
   birthdate?: string;
   gender?: string;
   mfaEnabled?: boolean;
-  preferences?: UserPreferences;
+  preferences?: ApiUserPreferences;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -27,19 +29,25 @@ export interface UserProfile {
  * Service for managing user profile operations with Next.js Auth
  */
 export class UserProfileService {
-  private static instance: UserProfileService;
+  private patientClient;
+  private providerClient;
+  private userRole: 'PATIENT' | 'PROVIDER' | null = null;
   private baseUrl = '/api/users/profile';
 
-  private constructor() {}
+  constructor() {
+    this.patientClient = patientClient;
+    this.providerClient = providerClient;
+  }
 
-  /**
-   * Get singleton instance of UserProfileService
-   */
-  public static getInstance(): UserProfileService {
-    if (!UserProfileService.instance) {
-      UserProfileService.instance = new UserProfileService();
+  setUserRole(role: 'PATIENT' | 'PROVIDER') {
+    this.userRole = role;
+  }
+
+  private getClient() {
+    if (!this.userRole) {
+      throw new Error('User role not set. Call setUserRole first.');
     }
-    return UserProfileService.instance;
+    return this.userRole === 'PATIENT' ? this.patientClient : this.providerClient;
   }
 
   /**
@@ -47,14 +55,14 @@ export class UserProfileService {
    */
   public async getCurrentUserProfile(): Promise<UserProfile> {
     try {
-      const response = await apiClient.get<UserProfile>(this.baseUrl);
+      const response = await this.getClient().getUserProfile();
       
       logAudit('USER_PROFILE_FETCHED' as AuditEventType, {
         status: 'success',
         timestamp: new Date().toISOString()
       });
       
-      return this.normalizeUserProfile(response);
+      return this.normalizeUserProfile(response.data);
     } catch (error) {
       logAudit('USER_PROFILE_FETCH_FAILED' as AuditEventType, {
         status: 'error',
@@ -73,14 +81,24 @@ export class UserProfileService {
     payload: Partial<UserProfile>
   ): Promise<UserProfile> {
     try {
-      const response = await apiClient.patch<UserProfile>(this.baseUrl, payload);
+      // Convert UserProfile to ApiUser type for the client
+      const { emailVerified, ...rest } = payload;
+      const userPayload: Partial<ApiUser> = {
+        ...rest,
+        // Only include emailVerified if it's explicitly set
+        ...(emailVerified !== undefined && {
+          emailVerified: emailVerified ? new Date() : null
+        })
+      };
+
+      const response = await this.getClient().updateUserProfile(userPayload);
       
       logAudit('USER_PROFILE_UPDATED' as AuditEventType, {
         status: 'success',
         timestamp: new Date().toISOString()
       });
       
-      return this.normalizeUserProfile(response);
+      return this.normalizeUserProfile(response.data);
     } catch (error) {
       logAudit('USER_PROFILE_UPDATE_FAILED' as AuditEventType, {
         status: 'error',
@@ -100,13 +118,7 @@ export class UserProfileService {
     code: string
   ): Promise<boolean> {
     try {
-      const response = await apiClient.post<{ success: boolean }>(
-        `${this.baseUrl}/verify`,
-        {
-          type: attributeName,
-          code
-        }
-      );
+      const response = await this.getClient().verifyAttribute(attributeName, code);
       
       logAudit('USER_ATTRIBUTE_VERIFIED' as AuditEventType, {
         status: 'success',
@@ -114,7 +126,7 @@ export class UserProfileService {
         attributeName
       });
       
-      return response.success;
+      return response.data.success;
     } catch (error) {
       logAudit('USER_ATTRIBUTE_VERIFICATION_FAILED' as AuditEventType, {
         status: 'error',
@@ -132,10 +144,7 @@ export class UserProfileService {
    */
   public async requestVerification(type: 'email' | 'phone'): Promise<boolean> {
     try {
-      const response = await apiClient.post<{ success: boolean }>(
-        `${this.baseUrl}/request-verification`,
-        { type }
-      );
+      const response = await this.getClient().requestVerification(type);
       
       logAudit('VERIFICATION_CODE_REQUESTED' as AuditEventType, {
         status: 'success',
@@ -143,7 +152,7 @@ export class UserProfileService {
         type
       });
       
-      return response.success;
+      return response.data.success;
     } catch (error) {
       logAudit('VERIFICATION_CODE_REQUEST_FAILED' as AuditEventType, {
         status: 'error',
@@ -161,32 +170,14 @@ export class UserProfileService {
    */
   public async uploadProfilePicture(file: File): Promise<string> {
     try {
-      // First, get a presigned URL for the upload
-      const urlResponse = await apiClient.get<{ uploadUrl: string, key: string }>(
-        `${this.baseUrl}/image`
-      );
-      
-      // Upload the file directly to the presigned URL
-      await fetch(urlResponse.uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      });
-      
-      // Notify the backend about the uploaded file
-      const response = await apiClient.post<{ user: User }>(
-        `${this.baseUrl}/image`,
-        { fileKey: urlResponse.key }
-      );
+      const response = await this.getClient().uploadProfilePicture(file);
       
       logAudit('PROFILE_PICTURE_UPLOADED' as AuditEventType, {
         status: 'success',
         timestamp: new Date().toISOString()
       });
       
-      return response.user.image || '';
+      return response.data.user.image || '';
     } catch (error) {
       logAudit('PROFILE_PICTURE_UPLOAD_FAILED' as AuditEventType, {
         status: 'error',
@@ -208,11 +199,10 @@ export class UserProfileService {
       email: data.email || '',
       role: data.role || '',
       image: data.image,
-      emailVerified: !!data.emailVerified,
+      emailVerified: data.emailVerified instanceof Date,  // Convert Date to boolean
       phoneNumber: data.profile?.phone || '',
       phoneVerified: !!data.phoneVerified,
       address: data.profile?.location || '',
-      // Convert other fields as needed
       birthdate: data.birthdate || '',
       gender: data.gender || '',
       mfaEnabled: !!data.mfaEnabled,
@@ -232,3 +222,5 @@ export class UserProfileService {
     return profile as UserProfile;
   }
 }
+
+export const userProfileService = new UserProfileService();

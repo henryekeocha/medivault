@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { protect } from '../middleware/auth.js';
-import { restrictTo } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
+import { restrictTo } from '../middleware/clerk.js';
 import { hipaaLogger } from '../middleware/hipaaLogger.js';
 import { encryptResponse } from '../middleware/encryption.js';
 import { patientController } from '../controllers/patient.controller.js';

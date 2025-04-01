@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/auth-options';
+import { auth } from '@clerk/nextjs/server';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { providerId: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId, getToken } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const token = await getToken();
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status');
     const startDate = searchParams.get('startDate');
@@ -31,7 +31,7 @@ export async function GET(
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.accessToken}`,
+          'Authorization': `Bearer ${token}`,
         },
       });
 

@@ -1,45 +1,37 @@
-import express from 'express';
+import { Router } from 'express';
+import { protect } from '../middleware/clerk.js';
+import { 
+  uploadFile, 
+  downloadFile, 
+  deleteFile 
+} from '../controllers/file.controller.js';
 import type { RequestHandler } from 'express';
-import multer from 'multer';
-import * as fileController from '../controllers/file.controller.js';
-import { protect } from '../middleware/auth.js';
-import { encryptResponse, decryptRequest, hipaaLogger } from '../middleware/encryption.js';
 
-const router = express.Router();
+const router = Router();
 
-// Configure multer for memory storage
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
-  },
-});
+// Apply protection middleware to all routes
+router.use(protect as RequestHandler);
 
-// Apply protection and HIPAA logging to all routes
-router.use(protect as unknown as RequestHandler);
-router.use(hipaaLogger as unknown as RequestHandler);
+// File upload routes
+router.route('/upload')
+  .post(uploadFile as RequestHandler);
 
-// Apply encryption middleware in production
-if (process.env.NODE_ENV === 'production') {
-  router.use(decryptRequest as unknown as RequestHandler);
-  router.use(encryptResponse as unknown as RequestHandler);
-}
+// File management routes
+router.route('/')
+  .get((req, res, next) => res.status(501).json({ message: 'Not implemented' }))
+  .post((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
 
-// File routes
-router.post(
-  '/upload',
-  upload.single('file'),
-  fileController.uploadFile as unknown as RequestHandler
-);
+router.route('/:id')
+  .get(downloadFile as RequestHandler)
+  .put((req, res, next) => res.status(501).json({ message: 'Not implemented' }))
+  .delete(deleteFile as RequestHandler);
 
-router.get(
-  '/download/:fileId',
-  fileController.downloadFile as unknown as RequestHandler
-);
+// File sharing routes
+router.route('/:id/share')
+  .post((req, res, next) => res.status(501).json({ message: 'Not implemented' }))
+  .get((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
 
-router.delete(
-  '/:fileId',
-  fileController.deleteFile as unknown as RequestHandler
-);
+router.route('/:id/unshare')
+  .post((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
 
 export default router; 

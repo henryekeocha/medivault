@@ -1,6 +1,10 @@
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import { ApiError, ApiResponse } from './types';
-import { getSession } from 'next-auth/react';
+import { useAuth } from '@clerk/nextjs';
+import { patientClient } from './patientClient';
+import { providerClient } from './providerClient';
+import adminClient from './adminClient';
+import sharedClient from './sharedClient';
 
 // Define our own AxiosProgressEvent type since it's not exported from axios
 interface AxiosProgressEvent {
@@ -25,10 +29,11 @@ const api = axios.create({
 // Request interceptor for adding auth token
 api.interceptors.request.use(
   async (config) => {
-    // Get session from NextAuth
-    const session = await getSession();
-    if (session?.accessToken) {
-      config.headers.Authorization = `Bearer ${session.accessToken}`;
+    // Get token from Clerk
+    const { getToken } = useAuth();
+    const token = await getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -42,9 +47,8 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      // NextAuth will handle redirecting to login
-      // We don't need to manage localStorage here anymore
-      window.location.href = '/auth/login';
+      // Redirect to Clerk's sign-in page
+      window.location.href = '/sign-in';
     }
     return Promise.reject(error);
   }
@@ -177,7 +181,20 @@ export const getRecipientInfoApi = async (chatId: string): Promise<RecipientInfo
 export default api;
 
 export * from './types';
-export { apiClient } from './client';
+
+// Export our role-based clients
+export { patientClient } from './patientClient';
+export { providerClient } from './providerClient';
+export { adminClient } from './adminClient';
+export { sharedClient } from './sharedClient';
+
+// Export a convenience object with all clients
+export const apiClients = {
+  patient: patientClient,
+  provider: providerClient,
+  admin: adminClient,
+  shared: sharedClient
+};
 
 // Re-export commonly used types for convenience
 export type {

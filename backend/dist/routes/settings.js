@@ -1,5 +1,5 @@
 import express from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
 import { getSettings, updateSettings, updatePassword, toggleTwoFactor, generateBackupCodes, } from '../controllers/settings.controller.js';
 const router = express.Router();
 // Protected routes

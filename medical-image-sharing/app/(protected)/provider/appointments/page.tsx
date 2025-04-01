@@ -23,8 +23,8 @@ import AppointmentList from '@/components/appointments/AppointmentList';
 import AppointmentForm from '@/components/appointments/AppointmentForm';
 import AppointmentDetail from '@/components/appointments/AppointmentDetail';
 import { ProviderCalendar } from '@/components/appointments/ProviderCalendar';
-import { useAuth } from '@/contexts/AuthContext';
-import { ApiClient } from '@/lib/api/client';
+import { useUser } from '@clerk/nextjs';
+import { providerClient } from '@/lib/api/providerClient';
 import StatCard from '@/components/dashboard/StatCard';
 import { 
   CalendarMonth as CalendarIcon,
@@ -58,7 +58,7 @@ interface AppointmentStats {
 }
 
 export default function ProviderAppointmentsPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
@@ -93,23 +93,55 @@ export default function ProviderAppointmentsPage() {
   
   // Fetch appointment stats
   useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      return;
+    }
+
+    // Check if user has provider role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PROVIDER') {
+      return;
+    }
+    
     const fetchStats = async () => {
-      if (!user?.id) return;
-      
       try {
         setLoading(true);
-        const apiClient = ApiClient.getInstance();
-        const todayResponse = await apiClient.getProviderAppointments(user.id, { status: 'SCHEDULED,CONFIRMED', startDate: new Date().toISOString().split('T')[0] });
-        const upcomingResponse = await apiClient.getProviderAppointments(user.id, { status: 'SCHEDULED,CONFIRMED' });
-        const completedResponse = await apiClient.getProviderAppointments(user.id, { status: 'COMPLETED' });
-        const cancelledResponse = await apiClient.getProviderAppointments(user.id, { status: 'CANCELLED' });
-        
-        setStats({
-          today: todayResponse.data?.totalCount || 0,
-          upcoming: upcomingResponse.data?.totalCount || 0,
-          completed: completedResponse.data?.totalCount || 0,
-          cancelled: cancelledResponse.data?.totalCount || 0,
+        const response = await providerClient.getAppointments({
+          status: 'ALL',
+          startDate: new Date().toISOString().split('T')[0]
         });
+        
+        if (response.status === 'success' && response.data) {
+          const appointments = response.data.data || [];
+          
+          // Filter appointments by status
+          const todayAppointments = appointments.filter(apt => 
+            apt.status !== 'CANCELLED' && 
+            new Date(apt.scheduledFor).toDateString() === new Date().toDateString()
+          );
+          
+          const upcomingAppointments = appointments.filter(apt => 
+            apt.status !== 'CANCELLED' && 
+            new Date(apt.scheduledFor) > new Date()
+          );
+          
+          const completedAppointments = appointments.filter(apt => 
+            apt.status === 'COMPLETED'
+          );
+          
+          const cancelledAppointments = appointments.filter(apt => 
+            apt.status === 'CANCELLED'
+          );
+          
+          setStats({
+            today: todayAppointments.length,
+            upcoming: upcomingAppointments.length,
+            completed: completedAppointments.length,
+            cancelled: cancelledAppointments.length,
+          });
+        }
       } catch (error) {
         console.error('Error fetching appointment stats:', error);
         setError('Failed to load appointment statistics.');
@@ -119,7 +151,7 @@ export default function ProviderAppointmentsPage() {
     };
     
     fetchStats();
-  }, [user?.id, refreshTrigger]);
+  }, [isLoaded, user]);
   
   // Handle tab change
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
@@ -151,6 +183,14 @@ export default function ProviderAppointmentsPage() {
     setRefreshTrigger(prev => prev + 1);
     setDetailDialogOpen(false);
   };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
   
   return (
     <Box sx={{ p: 3 }}>
@@ -324,7 +364,7 @@ export default function ProviderAppointmentsPage() {
         <DialogContent>
           <AppointmentForm
             onSuccess={handleAppointmentSuccess}
-            providerId={user?.id}
+            providerId={user.id}
           />
         </DialogContent>
       </Dialog>
@@ -351,7 +391,7 @@ export default function ProviderAppointmentsPage() {
               editMode
               initialData={selectedAppointment}
               onSuccess={handleAppointmentSuccess}
-              providerId={user?.id}
+              providerId={user.id}
               patientId={selectedAppointment.patientId}
             />
           )}

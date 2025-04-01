@@ -26,7 +26,7 @@ import {
   Circle as CircleIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { apiClient } from '@/lib/api/client';
+import { sharedClient } from '@/lib/api/sharedClient';
 import { Message } from '@/lib/api/types';
 import { formatDistanceToNow } from 'date-fns';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
@@ -70,32 +70,35 @@ export function ChatList({
     setErrorMessage(null);
 
     try {
-      const response = await apiClient.getChats();
-      if (!response || !response.data || !response.data.conversations) {
+      const response = await sharedClient.getChats();
+      if (!response || !response.data) {
         throw new Error('Invalid response from server');
       }
       
-      const currentUserId = apiClient.getCurrentUserId() || '';
+      const currentUserId = sharedClient.getCurrentUserId() || '';
       
       // Transform the conversations into the format expected by the component
-      const messages = response.data.conversations.map((conversation: any) => ({
-        id: conversation.participantId, // Use participantId as the message ID
-        senderId: currentUserId,
-        recipientId: conversation.participantId,
-        content: conversation.lastMessage,
-        createdAt: conversation.lastMessageAt,
-        sender: {
-          id: currentUserId,
-          name: 'You',
-          email: ''
-        },
-        recipient: {
+      // Handle different response formats (direct array or nested in data.conversations)
+      const conversationsData = Array.isArray(response.data) 
+        ? response.data 
+        : (response.data.conversations || []);
+      
+      const messages = conversationsData.map((conversation: any) => ({
+        id: conversation.id || `${conversation.participantId}-${Date.now()}`,
+        senderId: conversation.senderId || conversation.participantId,
+        recipientId: conversation.recipientId || currentUserId,
+        content: conversation.content || conversation.lastMessage || '',
+        createdAt: conversation.createdAt || conversation.lastMessageAt || new Date(),
+        sender: conversation.sender || {
           id: conversation.participantId,
-          name: conversation.participantName,
-          email: conversation.participantEmail
+          name: conversation.participantName
         },
-        isSender: true,
-        unread: false // We'll need to implement this if needed
+        recipient: conversation.recipient || {
+          id: currentUserId,
+          name: "You"
+        },
+        isSender: (conversation.senderId === currentUserId) || false,
+        unread: (!conversation.readAt && conversation.recipientId === currentUserId) || false
       })) as ExtendedMessage[];
       
       setChats(messages);
@@ -213,7 +216,7 @@ export function ChatList({
                     }}
                   >
                     <ListItemAvatar>
-                      <Avatar src={otherUser.profileImage as string | undefined}>
+                      <Avatar src={otherUser.image}>
                         <AccountCircle />
                       </Avatar>
                     </ListItemAvatar>

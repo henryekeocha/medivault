@@ -3,18 +3,16 @@
 import React from 'react';
 import { ThemeProvider as NextThemesProvider } from 'next-themes';
 import { ThemeProvider } from '@/contexts/ThemeContext';
-import { AuthProvider } from '@/contexts/AuthContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
 import { AccessibilityProvider } from '@/contexts/AccessibilityContext';
 import { ToastProvider } from '@/contexts/ToastContext';
-import { WebSocketProvider } from '@/contexts/WebSocketContext';
+import { WebSocketProvider } from '@/components/providers/WebSocketProvider';
 import GlobalErrorBoundary from '@/components/GlobalErrorBoundary';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import enUS from 'date-fns/locale/en-US';
 import { WebSocketService } from '@/lib/api/services/websocket.service'; 
 import { CollaborationService } from '@/lib/api/services/collaboration.service';
-import { SessionProvider } from 'next-auth/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Create a client
@@ -37,11 +35,12 @@ const useServices = () => {
     
     // Wrap in a try-catch to prevent any initialization errors from breaking the app
     try {
-      // Get singleton instances and initialize them
+      // Get singleton instances
       const wsService = WebSocketService.getInstance();
-      wsService.initialize(); // Only initialize, don't connect yet
+      // Just getting the instance is enough, it initializes internally in the constructor
       
       const collabService = CollaborationService.getInstance();
+      // All services are now designed to initialize themselves when created
       
       console.log('Services initialized successfully');
       setInitialized(true);
@@ -65,12 +64,27 @@ const SafeWebSocketProvider: React.FC<{children: React.ReactNode}> = ({ children
   // Add a custom error boundary just for WebSocketProvider to prevent crashes
   const [hasError, setHasError] = React.useState(false);
   
+  React.useEffect(() => {
+    // Setup error handling for WebSocket connection errors
+    const handleWebSocketError = () => {
+      console.error('WebSocket connection error detected');
+      setHasError(true);
+    };
+    
+    window.addEventListener('websocket:error', handleWebSocketError);
+    
+    return () => {
+      window.removeEventListener('websocket:error', handleWebSocketError);
+    };
+  }, []);
+  
   // If there was an error with WebSocketProvider, just render children without it
   if (hasError) {
     console.warn('WebSocketProvider encountered an error and was disabled');
     return <>{children}</>;
   }
   
+  // Use error boundary pattern with try/catch
   try {
     return (
       <WebSocketProvider>
@@ -86,33 +100,29 @@ const SafeWebSocketProvider: React.FC<{children: React.ReactNode}> = ({ children
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider>
-      <NextThemesProvider 
-        attribute="class"
-        defaultTheme="system"
-        enableSystem
-      >
-        <ThemeProvider>
-          <GlobalErrorBoundary>
-            <AuthProvider>
-              <QueryClientProvider client={queryClient}>
-                <ToastProvider>
-                  <SafeWebSocketProvider>
-                    <NotificationProvider>
-                      <AccessibilityProvider>
-                        <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enUS}>
-                          <ServiceInitializer />
-                          {children}
-                        </LocalizationProvider>
-                      </AccessibilityProvider>
-                    </NotificationProvider>
-                  </SafeWebSocketProvider>
-                </ToastProvider>
-              </QueryClientProvider>
-            </AuthProvider>
-          </GlobalErrorBoundary>
-        </ThemeProvider>
-      </NextThemesProvider>
-    </SessionProvider>
+    <NextThemesProvider 
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+    >
+      <ThemeProvider>
+        <GlobalErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <ToastProvider>
+              <SafeWebSocketProvider>
+                <NotificationProvider>
+                  <AccessibilityProvider>
+                    <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enUS}>
+                      <ServiceInitializer />
+                      {children}
+                    </LocalizationProvider>
+                  </AccessibilityProvider>
+                </NotificationProvider>
+              </SafeWebSocketProvider>
+            </ToastProvider>
+          </QueryClientProvider>
+        </GlobalErrorBoundary>
+      </ThemeProvider>
+    </NextThemesProvider>
   );
 } 

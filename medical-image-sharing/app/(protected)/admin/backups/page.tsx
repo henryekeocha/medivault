@@ -51,15 +51,16 @@ import {
   Settings as SettingsIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@clerk/nextjs';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { LocalizationProvider, DateTimePicker } from '@mui/x-date-pickers';
 import { format, parseISO, isAfter } from 'date-fns';
 import { Role } from '@prisma/client';
 import { routes } from '@/config/routes';
 import type { Route } from 'next';
+import { ClerkAuthService } from '@/lib/clerk/auth-service';
 
 interface Backup {
   id: string;
@@ -98,8 +99,8 @@ enum TabType {
 }
 
 export default function BackupAndRecoveryPage() {
+  const { isLoaded, userId, sessionId } = useAuth();
   const router = useRouter();
-  const { user, isAuthenticated } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -139,19 +140,26 @@ export default function BackupAndRecoveryPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMaintenanceDialog, setShowMaintenanceDialog] = useState(false);
   
-  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push(routes.root.login as Route);
+    if (!isLoaded) return;
+
+    if (!userId) {
+      router.push('/auth/login');
+      return;
     }
-  }, [isAuthenticated, router]);
-  
-  // Check if user is authenticated and has admin role
-  useEffect(() => {
-    if (!user || user.role !== Role.ADMIN) {
-      router.push(routes.root.login as Route);
-    }
-  }, [user, router]);
+
+    // Check user role
+    const checkRole = async () => {
+      const userRole = await ClerkAuthService.getUserRole();
+      if (userRole !== Role.ADMIN) {
+        router.push('/dashboard');
+        return;
+      }
+      fetchBackups();
+    };
+
+    checkRole();
+  }, [isLoaded, userId, router]);
   
   // Fetch backup data
   const fetchBackups = async () => {
@@ -159,8 +167,7 @@ export default function BackupAndRecoveryPage() {
     setError('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getBackups();
+      const response = await adminClient.getBackups();
       
       if (response.status === 'success') {
         setBackups(response.data);
@@ -181,8 +188,7 @@ export default function BackupAndRecoveryPage() {
     setError('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getBackupSchedule();
+      const response = await adminClient.getBackupSchedule();
       
       if (response.status === 'success') {
         setBackupSchedule(response.data);
@@ -203,72 +209,39 @@ export default function BackupAndRecoveryPage() {
     setError('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getMaintenanceStatus();
+      const response = await adminClient.getMaintenanceStatus();
       
       if (response.status === 'success') {
         setMaintenanceStatus(response.data);
         if (response.data.scheduledStart) {
-          setScheduledMaintenanceStart(parseISO(response.data.scheduledStart));
+          setScheduledMaintenanceStart(new Date(response.data.scheduledStart));
         }
         if (response.data.scheduledEnd) {
-          setScheduledMaintenanceEnd(parseISO(response.data.scheduledEnd));
+          setScheduledMaintenanceEnd(new Date(response.data.scheduledEnd));
         }
-        setMaintenanceMessage(response.data.message);
+        setMaintenanceMessage(response.data.message || '');
       } else {
         setError(response.error?.message || 'Failed to fetch maintenance status');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error fetching maintenance status:', err);
-      if (err?.response?.status === 401) {
-        // Unauthorized, redirect to login
-        router.push(routes.root.login as Route);
-      } else {
-        setError(err?.message || 'Failed to fetch maintenance status');
-      }
+      setError('Failed to load maintenance status. Please try again.');
     } finally {
       setLoading(false);
     }
   };
   
-  // Initialize data based on current tab
-  useEffect(() => {
-    if (!isAuthenticated) {
-      router.push(routes.root.login as Route);
-      return;
-    }
-
-    if (user?.role !== Role.ADMIN) {
-      router.push('/dashboard');
-      return;
-    }
-    
-    switch (currentTab) {
-      case TabType.BACKUPS:
-        fetchBackups();
-        break;
-      case TabType.SCHEDULING:
-        fetchBackupSchedule();
-        break;
-      case TabType.MAINTENANCE:
-        fetchMaintenanceStatus();
-        break;
-    }
-  }, [isAuthenticated, user?.role, router, currentTab]);
-  
   // Create new backup
   const handleCreateBackup = async () => {
-    setLoading(true);
+    setNewBackupInProgress(true);
     setError('');
-    setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.createBackup();
+      const response = await adminClient.createBackup();
       
       if (response.status === 'success') {
-        setSuccess('Backup created successfully');
-        fetchBackups();
+        setSuccess('Backup creation initiated successfully');
+        fetchBackups(); // Refresh the list
       } else {
         setError(response.error?.message || 'Failed to create backup');
       }
@@ -276,32 +249,29 @@ export default function BackupAndRecoveryPage() {
       console.error('Error creating backup:', err);
       setError('Failed to create backup. Please try again.');
     } finally {
-      setLoading(false);
+      setNewBackupInProgress(false);
     }
   };
   
-  // Restore from backup
+  // Restore backup
   const handleRestoreBackup = async () => {
     if (!selectedBackup) return;
     
     setLoading(true);
     setError('');
-    setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.restoreBackup(selectedBackup.id);
+      const response = await adminClient.restoreBackup(selectedBackup.id);
       
       if (response.status === 'success') {
-        setSuccess('System restored from backup successfully');
+        setSuccess('Backup restoration initiated successfully');
         setShowRestoreDialog(false);
-        fetchBackups();
       } else {
-        setError(response.error?.message || 'Failed to restore from backup');
+        setError(response.error?.message || 'Failed to restore backup');
       }
     } catch (err) {
       console.error('Error restoring backup:', err);
-      setError('Failed to restore from backup. Please try again.');
+      setError('Failed to restore backup. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -313,16 +283,14 @@ export default function BackupAndRecoveryPage() {
     
     setLoading(true);
     setError('');
-    setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.deleteBackup(selectedBackup.id);
+      const response = await adminClient.deleteBackup(selectedBackup.id);
       
       if (response.status === 'success') {
         setSuccess('Backup deleted successfully');
         setShowDeleteDialog(false);
-        fetchBackups();
+        fetchBackups(); // Refresh the list
       } else {
         setError(response.error?.message || 'Failed to delete backup');
       }
@@ -340,16 +308,15 @@ export default function BackupAndRecoveryPage() {
     setError('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.downloadBackup(backup.id);
+      const response = await adminClient.downloadBackup(backup.id);
       
       if (response.status === 'success') {
-        // Create a download link for the backup file
-        const blob = new Blob([response.data], { type: 'application/zip' });
+        // Create a blob from the response data
+        const blob = new Blob([response.data], { type: 'application/octet-stream' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `backup-${format(parseISO(backup.createdAt), 'yyyy-MM-dd-HHmm')}.zip`;
+        a.download = `backup-${backup.id}.zip`;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);
@@ -369,15 +336,12 @@ export default function BackupAndRecoveryPage() {
   const handleSaveSchedule = async () => {
     setScheduleSaving(true);
     setError('');
-    setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.updateBackupSchedule(backupSchedule);
+      const response = await adminClient.updateBackupSchedule(backupSchedule);
       
       if (response.status === 'success') {
         setSuccess('Backup schedule updated successfully');
-        fetchBackupSchedule();
       } else {
         setError(response.error?.message || 'Failed to update backup schedule');
       }
@@ -393,20 +357,16 @@ export default function BackupAndRecoveryPage() {
   const handleToggleMaintenance = async (enabled: boolean) => {
     setMaintenanceSaving(true);
     setError('');
-    setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const updatedStatus: SystemMaintenanceStatus = {
+      const response = await adminClient.updateMaintenanceStatus({
         ...maintenanceStatus,
         enabled,
-      };
-      
-      const response = await apiClient.updateMaintenanceStatus(updatedStatus);
+      });
       
       if (response.status === 'success') {
         setSuccess(`Maintenance mode ${enabled ? 'enabled' : 'disabled'} successfully`);
-        fetchMaintenanceStatus();
+        setMaintenanceStatus(response.data);
       } else {
         setError(response.error?.message || 'Failed to update maintenance status');
       }
@@ -420,41 +380,37 @@ export default function BackupAndRecoveryPage() {
   
   // Save scheduled maintenance
   const handleSaveScheduledMaintenance = async () => {
-    if (!scheduledMaintenanceStart || !scheduledMaintenanceEnd || !maintenanceMessage) {
-      setError('Please fill in all maintenance fields');
+    if (!scheduledMaintenanceStart || !scheduledMaintenanceEnd) {
+      setError('Please select both start and end times');
       return;
     }
     
     if (isAfter(scheduledMaintenanceStart, scheduledMaintenanceEnd)) {
-      setError('Start time must be before end time');
+      setError('End time must be after start time');
       return;
     }
     
     setMaintenanceSaving(true);
     setError('');
-    setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const updatedStatus: SystemMaintenanceStatus = {
+      const response = await adminClient.updateMaintenanceStatus({
         ...maintenanceStatus,
         scheduledStart: scheduledMaintenanceStart.toISOString(),
         scheduledEnd: scheduledMaintenanceEnd.toISOString(),
         message: maintenanceMessage,
-      };
-      
-      const response = await apiClient.updateMaintenanceStatus(updatedStatus);
+      });
       
       if (response.status === 'success') {
         setSuccess('Scheduled maintenance updated successfully');
         setShowMaintenanceDialog(false);
-        fetchMaintenanceStatus();
+        setMaintenanceStatus(response.data);
       } else {
-        setError(response.error?.message || 'Failed to schedule maintenance');
+        setError(response.error?.message || 'Failed to update scheduled maintenance');
       }
     } catch (err) {
-      console.error('Error scheduling maintenance:', err);
-      setError('Failed to schedule maintenance. Please try again.');
+      console.error('Error updating scheduled maintenance:', err);
+      setError('Failed to update scheduled maintenance. Please try again.');
     } finally {
       setMaintenanceSaving(false);
     }
@@ -1036,7 +992,7 @@ export default function BackupAndRecoveryPage() {
                       label="Start Time"
                       value={scheduledMaintenanceStart}
                       onChange={(newValue: Date | null) => setScheduledMaintenanceStart(newValue)}
-                      renderInput={(params) => <TextField {...params} fullWidth />}
+                      slotProps={{ textField: { fullWidth: true } }}
                     />
                   </Box>
                 </Grid>
@@ -1046,7 +1002,7 @@ export default function BackupAndRecoveryPage() {
                       label="End Time"
                       value={scheduledMaintenanceEnd}
                       onChange={(newValue: Date | null) => setScheduledMaintenanceEnd(newValue)}
-                      renderInput={(params) => <TextField {...params} fullWidth />}
+                      slotProps={{ textField: { fullWidth: true } }}
                     />
                   </Box>
                 </Grid>

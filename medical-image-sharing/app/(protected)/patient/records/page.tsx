@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Typography,
@@ -16,19 +16,38 @@ import {
 import { MedicalRecordsList } from '@/components/medical-records/MedicalRecordsList';
 import { MedicalRecordDetail } from '@/components/medical-records/MedicalRecordDetail';
 import { MedicalRecord } from '@/lib/api/types';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import { withProtectedRoute } from '@/components/ProtectedRoute';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
+import { patientClient } from '@/lib/api/patientClient';
+import { LoadingState } from '@/components/LoadingState';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 function PatientMedicalRecordsPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const [selectedRecord, setSelectedRecord] = useState<MedicalRecord | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [records, setRecords] = useState<MedicalRecord[]>([]);
   const isMobile = useMediaQuery((theme: Theme) => theme.breakpoints.down('md')); 
-  const { error, clearError } = useErrorHandler({ 
+  const { error, loading, withErrorHandling, clearError } = useErrorHandler({ 
     context: 'Patient Records', 
     showToastByDefault: true 
   });
+
+  const fetchRecords = async () => {
+    const response = await patientClient.getMedicalRecords();
+    if (response.status === 'success' && response.data) {
+      setRecords(response.data.data);
+    } else {
+      throw new Error(response.error?.message || 'Failed to fetch medical records');
+    }
+  };
+
+  useEffect(() => {
+    withErrorHandling(fetchRecords).catch((error: Error) => {
+      console.error('Error loading medical records:', error);
+    });
+  }, [withErrorHandling]);
 
   const handleRecordClick = (record: MedicalRecord) => {
     setSelectedRecord(record);
@@ -38,6 +57,21 @@ function PatientMedicalRecordsPage() {
   const handleCloseDialog = () => {
     setDetailDialogOpen(false);
   };
+
+  const handleRetryClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    withErrorHandling(fetchRecords).catch((error: Error) => {
+      console.error('Error reloading medical records:', error);
+    });
+  };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <Container maxWidth="xl">
@@ -54,18 +88,30 @@ function PatientMedicalRecordsPage() {
         <Alert 
           severity="error" 
           sx={{ mb: 3 }}
-          onClose={clearError}
+          action={
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={handleRetryClick}
+              startIcon={<RefreshIcon />}
+            >
+              Retry
+            </Button>
+          }
         >
           {error}
         </Alert>
       )}
 
-      <Paper sx={{ p: 0, overflow: 'hidden' }}>
-        <MedicalRecordsList
-          patientId={user?.id}
-          onRecordClick={handleRecordClick}
-        />
-      </Paper>
+      {loading ? (
+        <LoadingState message="Loading medical records..." />
+      ) : (
+        <Paper sx={{ p: 0, overflow: 'hidden' }}>
+          <MedicalRecordsList
+            onRecordClick={handleRecordClick}
+          />
+        </Paper>
+      )}
 
       <Dialog
         open={detailDialogOpen}

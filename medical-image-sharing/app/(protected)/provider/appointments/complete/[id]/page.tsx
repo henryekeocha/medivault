@@ -33,7 +33,7 @@ import {
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { format } from 'date-fns';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { AppointmentStatus } from '@prisma/client';
 import { Appointment, UpdateAppointmentRequest } from '@/lib/api/types';
 import { toast } from 'react-hot-toast';
@@ -75,7 +75,7 @@ const suggestedTimeSlots = [
 export default function CompleteAppointmentPage() {
   const router = useRouter();
   const params = useParams();
-  const appointmentId = params.id as string;
+  const appointmentId = params?.id as string;
   const queryClient = useQueryClient();
 
   // Component state
@@ -94,12 +94,19 @@ export default function CompleteAppointmentPage() {
   const [loadingTimeSlots, setLoadingTimeSlots] = useState(false);
 
   // Fetch appointment data
-  const { data: appointmentResponse, isLoading, error } = useQuery({
+  const { data: appointment, isLoading, error } = useQuery<Appointment>({
     queryKey: ['appointment', appointmentId],
     queryFn: async () => {
-      if (!appointmentId) return null;
-      const response = await ApiClient.getInstance().getAppointment(appointmentId);
-      return response;
+      if (!appointmentId) throw new Error('No appointment ID provided');
+      // Get all appointments and find the one we want
+      // This is a workaround since we don't have a direct getAppointment method
+      const response = await providerClient.getAppointments({
+        startDate: undefined,
+        endDate: undefined
+      });
+      const foundAppointment = response.data?.data?.find(apt => apt.id === appointmentId);
+      if (!foundAppointment) throw new Error('Failed to fetch appointment');
+      return foundAppointment;
     },
     enabled: !!appointmentId,
   });
@@ -107,7 +114,7 @@ export default function CompleteAppointmentPage() {
   // Update appointment mutation
   const updateAppointment = useMutation({
     mutationFn: (data: UpdateAppointmentRequest) =>
-      ApiClient.getInstance().updateAppointment(appointmentId, data),
+      providerClient.updateAppointment(appointmentId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointment', appointmentId] });
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
@@ -123,8 +130,7 @@ export default function CompleteAppointmentPage() {
 
   // Initialize form with appointment data
   useEffect(() => {
-    if (appointmentResponse?.data) {
-      const appointment = appointmentResponse.data;
+    if (appointment) {
       setAppointmentData(appointment);
       
       // Pre-fill form if there are existing notes
@@ -134,7 +140,7 @@ export default function CompleteAppointmentPage() {
       
       setLoading(false);
     }
-  }, [appointmentResponse]);
+  }, [appointment]);
 
   // Load suggested time slots
   useEffect(() => {
@@ -148,9 +154,7 @@ export default function CompleteAppointmentPage() {
     
     try {
       setLoadingTimeSlots(true);
-      // Get the provider's available time slots for follow-up appointments
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getProviderAvailabilityBlocks();
+      const response = await providerClient.getAvailabilityBlocks();
       
       if (response.status === 'success' && response.data) {
         // Transform the API response to our expected format

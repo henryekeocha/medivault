@@ -1,34 +1,39 @@
 import { AnnotationService } from './annotation.service';
-import { AuthService } from './auth.service';
 import { ImageService } from './image.service';
 import { ShareService } from './share.service';
 import { WebSocketService } from './websocket.service';
+import { useAuth } from '@clerk/nextjs';
 
-export { AuthService } from './auth.service';
 export { ImageService } from './image.service';
 export { ShareService } from './share.service';
 export { AnnotationService } from './annotation.service';
 export { WebSocketService } from './websocket.service';
 
+// Create instances of services
+const imageService = new ImageService();
+const shareService = new ShareService();
+const annotationService = new AnnotationService();
+const wsService = WebSocketService.getInstance();
+
 // Helper function to initialize all services
 export function initializeServices() {
-  // Initialize all services to ensure they're ready
-  const auth = AuthService.getInstance();
-  const images = ImageService.getInstance();
-  const shares = ShareService.getInstance();
-  const annotations = AnnotationService.getInstance();
-  const ws = WebSocketService.getInstance();
-
+  const { isSignedIn } = useAuth();
+  
   // Connect WebSocket if authenticated
-  if (auth.isAuthenticated()) {
-    ws.connect();
+  if (isSignedIn) {
+    wsService.connect();
   }
 
   return {
-    auth,
-    images,
-    shares,
-    annotations,
-    ws,
+    images: imageService,
+    shares: shareService,
+    annotations: annotationService,
+    ws: wsService,
   };
-} 
+}
+
+// Export singleton instances
+export const images = imageService;
+export const shares = shareService;
+export const annotations = annotationService;
+export const ws = wsService; 

@@ -1,9 +1,46 @@
 import nodemailer from 'nodemailer';
 import type { User, Appointment } from '@prisma/client';
+import { Role, ProviderSpecialty, AppointmentStatus } from '@prisma/client';
 
-type AppointmentWithUsers = Appointment & {
-  patient: User;
-  doctor: User;
+// Update AppointmentWithUsers to match the model used in appointment.service.ts
+type AppointmentWithUsers = {
+  id: string;
+  startTime: Date;
+  endTime: Date;
+  datetime: Date;
+  status: AppointmentStatus;
+  patientId: string;
+  doctorId: string;
+  notes: string | null;
+  imageId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  patient: {
+    id: string;
+    email: string;
+    name: string;
+    role: Role;
+    specialty: ProviderSpecialty | null | undefined;
+    image: string | null;
+    username: string | null;
+    password: string | null;
+    emailVerified: Date | null;
+    createdAt: Date;
+    isActive: boolean;
+  };
+  doctor: {
+    id: string;
+    email: string;
+    name: string;
+    role: Role;
+    specialty: ProviderSpecialty | null | undefined;
+    image: string | null;
+    username: string | null;
+    password: string | null;
+    emailVerified: Date | null;
+    createdAt: Date;
+    isActive: boolean;
+  };
 };
 
 // Create transporter

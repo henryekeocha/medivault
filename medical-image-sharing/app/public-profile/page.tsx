@@ -18,14 +18,28 @@ import {
   DialogContent,
   DialogActions,
 } from '@mui/material';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
 import { TwoFactorForm } from '@/components/auth/TwoFactorForm';
 import { api } from '@/lib/api/api';
 import { useToast } from '@/contexts/ToastContext';
 import { UserResponse } from '@/lib/api/types';
+import { Role } from '@prisma/client';
+
+interface ExtendedUser {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  phoneNumber?: string;
+  address?: string;
+  birthdate?: string;
+  gender?: string;
+  twoFactorEnabled?: boolean;
+}
 
 export default function ProfilePage() {
-  const { user, updateUser } = useAuth();
+  const { data: session, update } = useSession();
+  const user = session?.user as ExtendedUser;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -76,7 +90,15 @@ export default function ProfilePage() {
       try {
         setLoading(true);
         await api.post('/api/users/disable-2fa', {});
-        updateUser({ ...user, twoFactorEnabled: false });
+        if (session?.user) {
+          await update({
+            ...session,
+            user: {
+              ...session.user,
+              twoFactorEnabled: false
+            }
+          });
+        }
         toast.showSuccess('Two-factor authentication disabled');
       } catch (err: any) {
         const errorMessage = err.response?.data?.message || 'Failed to disable two-factor authentication';
@@ -105,10 +127,13 @@ export default function ProfilePage() {
       // Implement 2FA verification API call
       await api.post('/api/users/verify-2fa', { code });
       
-      updateUser({ 
-        ...user, 
-        twoFactorEnabled: true 
-      } as UserResponse);
+      await update({
+        ...session,
+        user: {
+          ...session?.user,
+          twoFactorEnabled: true
+        }
+      });
       setSuccess('Two-factor authentication enabled successfully');
       toast.showSuccess('Two-factor authentication enabled successfully');
       setShowTwoFactorSetup(false);
@@ -155,7 +180,7 @@ export default function ProfilePage() {
                   <TextField
                     fullWidth
                     label="Name"
-                    value={user?.name}
+                    value={session?.user?.name}
                     disabled
                   />
                 </Grid>
@@ -163,7 +188,7 @@ export default function ProfilePage() {
                   <TextField
                     fullWidth
                     label="Email"
-                    value={user?.email}
+                    value={session?.user?.email}
                     disabled
                   />
                 </Grid>
@@ -171,7 +196,7 @@ export default function ProfilePage() {
                   <TextField
                     fullWidth
                     label="Role"
-                    value={user?.role}
+                    value={session?.user?.role}
                     disabled
                   />
                 </Grid>
@@ -248,10 +273,10 @@ export default function ProfilePage() {
                     <Button
                       type="submit"
                       variant="contained"
+                      color="primary"
                       disabled={loading}
-                      fullWidth
                     >
-                      Change Password
+                      Update Password
                     </Button>
                   </Grid>
                 </Grid>
@@ -262,7 +287,7 @@ export default function ProfilePage() {
               <FormControlLabel
                 control={
                   <Switch
-                    checked={user?.twoFactorEnabled}
+                    checked={user?.twoFactorEnabled || false}
                     onChange={handleTwoFactorToggle}
                     disabled={loading}
                   />
@@ -272,23 +297,24 @@ export default function ProfilePage() {
             </Paper>
           </Grid>
         </Grid>
-
-        {/* Two-Factor Setup Dialog */}
-        <Dialog
-          open={showTwoFactorSetup}
-          onClose={() => setShowTwoFactorSetup(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogContent>
-            <TwoFactorForm
-              email={user?.email || ''}
-              onVerify={handleTwoFactorSetup}
-              onResend={handleTwoFactorResend}
-            />
-          </DialogContent>
-        </Dialog>
       </Box>
+
+      {/* Two-Factor Setup Dialog */}
+      <Dialog
+        open={showTwoFactorSetup}
+        onClose={() => setShowTwoFactorSetup(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Set Up Two-Factor Authentication</DialogTitle>
+        <DialogContent>
+          <TwoFactorForm
+            email={user?.email || ''}
+            onVerify={handleTwoFactorSetup}
+            onResend={handleTwoFactorResend}
+          />
+        </DialogContent>
+      </Dialog>
     </Container>
   );
 } 

@@ -13,7 +13,8 @@ import {
   CircularProgress 
 } from '@mui/material';
 import { Role, ProviderSpecialty } from '@prisma/client';
-import { apiClient } from '@/lib/api';
+import { authClient } from '@/lib/api/authClient';
+import { RegisterRequest } from '@/lib/api/types';
 
 // Test users data
 interface TestUser {
@@ -83,19 +84,27 @@ export const CreateTestUsers: React.FC = () => {
     try {
       for (const userData of testUsers) {
         try {
-          const response = await apiClient.register({
+          const registerData: RegisterRequest = {
             name: userData.name,
             email: userData.email,
             password: userData.password,
             role: userData.role,
-            specialty: userData.specialty,
-            username: userData.username
-          });
+            specialty: userData.specialty
+          };
           
-          setResults(prev => ({
-            ...prev,
-            success: [...prev.success, `Created: ${userData.name} (${userData.role})`]
-          }));
+          const response = await authClient.register(registerData);
+          
+          if (response.status === 'success') {
+            setResults(prev => ({
+              ...prev,
+              success: [...prev.success, `Created: ${userData.name} (${userData.role})`]
+            }));
+          } else {
+            setResults(prev => ({
+              ...prev,
+              errors: [...prev.errors, `Error creating ${userData.name}: ${response.error?.message || 'Unknown error'}`]
+            }));
+          }
         } catch (error: any) {
           const errorMessage = error?.response?.data?.error || error?.message || 'Unknown error';
           setResults(prev => ({

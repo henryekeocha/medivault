@@ -137,36 +137,57 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  username?: string;
-  role: Role;
-  specialty?: ProviderSpecialty;
-  emailVerified?: Date;
+  role: 'PATIENT' | 'PROVIDER' | 'ADMIN';
   image?: string;
-  profileImage?: string;
+  emailVerified: Date | null;
+  phoneNumber?: string;
+  phoneVerified?: boolean;
+  address?: string;
+  birthdate?: string;
+  gender?: string;
+  mfaEnabled?: boolean;
+  preferences?: UserPreferences;
+  createdAt?: Date;
+  updatedAt?: Date;
+  practiceName?: string;
+  website?: string;
+  licenseNumber?: string;
+  workingHours?: {
+    [key: string]: {
+      start: string;
+      end: string;
+      available: boolean;
+    };
+  };
+  institution?: string;
+  activePatients?: number;
+  specialty?: string;
   isActive: boolean;
-  twoFactorEnabled: boolean;
-  twoFactorSecret?: string;
-  lastLoginAt?: Date;
-  lastLoginIp?: string;
-  createdAt: Date;
-  updatedAt: Date;
-  backupCodes: string[];
 }
 
 // Extended Patient interface for user with role=Patient
-export interface Patient extends User {
-  firstName: string;
-  lastName: string;
-  status: string;
-  phone?: string;
-  tags?: string[];
-  dateOfBirth?: Date;
-  gender?: string;
-  address?: string;
-  emergencyContact?: string;
-  medicalHistory?: string;
-  allergies?: string[];
-  medications?: string[];
+export interface Patient {
+  id: string;
+  name: string;
+  dateOfBirth: string;
+  gender: string;
+  status: PatientStatus;
+  contact: {
+    email: string;
+    phone?: string;
+    emergencyContact?: {
+      name: string;
+      relationship: string;
+      phone: string;
+    };
+  };
+  address?: {
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    country: string;
+  };
   insuranceProvider?: string;
   insuranceId?: string;
   notes?: string;
@@ -210,14 +231,14 @@ export interface RegisterRequest {
 }
 
 export interface AuthResponse {
-  accessToken: string;
-  token: string;
-  refreshToken: string;
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    role: Role;
+  status: 'success' | 'error';
+  data?: {
+    user?: UserResponse;
+    token?: string;
+  };
+  error?: {
+    message: string;
+    code?: string;
   };
 }
 
@@ -582,16 +603,14 @@ export interface AnalyticsResponse {
 // Health Metric Types
 export interface HealthMetricResponse {
   id: string;
+  patientId: string;
   type: string;
   value: number;
-  unit?: string;
+  unit: string;
   timestamp: Date;
   notes?: string;
-  metadata?: any;
-  patientId: string;
-  providerId?: string;
-  patient?: User;
-  provider?: User;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 // Appointment Response Type
@@ -623,7 +642,7 @@ export interface AnalysisResult {
 
 export interface TokenValidationResponse {
   isValid: boolean;
-  user?: User;
+  user?: UserResponse;
 }
 
 export interface ErrorLogRequest {
@@ -634,17 +653,13 @@ export interface ErrorLogRequest {
   metadata?: Record<string, any>;
 }
 
-export interface UserResponse {
-  id: string;
-  email: string;
-  name: string;
-  role: Role;
-  specialty?: ProviderSpecialty;
+export interface UserResponse extends User {
   twoFactorEnabled: boolean;
   lastLoginAt?: Date;
   lastLoginIp?: string;
   createdAt: Date;
   updatedAt: Date;
+  mfaEnabled?: boolean;
 }
 
 export interface LoginResponse {
@@ -687,4 +702,97 @@ export interface ProviderVerificationRequest {
 export interface ConfirmSignUpRequest {
   email: string;
   code: string;
+  name?: string;
+  password?: string;
+  role?: Role;
+  specialty?: ProviderSpecialty;
+}
+
+export interface UserPreferences {
+  emailNotifications?: boolean;
+  pushNotifications?: boolean;
+  smsNotifications?: boolean;
+  theme?: 'light' | 'dark' | 'system';
+  language?: string;
+}
+
+export interface SharedImage {
+  id: string;
+  name: string;
+  sharedWith: string;
+  expiryDate: string;
+  accessCount: number;
+  link: string;
+}
+
+export interface ImageShareOptions {
+  patientId: string;
+  imageId: string;
+  expiryDays: number;
+  requireConsent: boolean;
+  watermarkEnabled: boolean;
+  allowDownload: boolean;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+  code?: string;
+  newPassword?: string;
+}
+
+export interface ResetPasswordRequest {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
+export interface UpdateProfileRequest {
+  name?: string;
+  email?: string;
+  phoneNumber?: string;
+  address?: string;
+  birthdate?: Date;
+  gender?: string;
+  specialty?: ProviderSpecialty;
+  image?: string;
+}
+
+export interface UpdateProfileResponse {
+  user: UserResponse;
+  message: string;
+}
+
+export interface UpdateProfileError {
+  message: string;
+  errors?: {
+    name?: string[];
+    email?: string[];
+    phoneNumber?: string[];
+    address?: string[];
+    birthdate?: string[];
+    gender?: string[];
+    specialty?: string[];
+    image?: string[];
+  };
+}
+
+export interface UpdateProfileSuccess {
+  user: UserResponse;
+  message: string;
+}
+
+export interface UpdateProfileOptions {
+  onSuccess?: (data: UpdateProfileSuccess) => void;
+  onError?: (error: UpdateProfileError) => void;
+  onSettled?: () => void;
+}
+
+export type UpdateProfileQueryKey = ['profile', string];
+
+export interface UpdateProfileQueryResult {
+  data?: UpdateProfileSuccess;
+  isLoading: boolean;
+  isError: boolean;
+  error?: UpdateProfileError;
+  refetch: () => void;
 } 

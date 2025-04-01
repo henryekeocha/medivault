@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/auth-options';
+import { auth } from '@clerk/nextjs/server';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,9 +10,9 @@ import prisma from '@/lib/prisma';
 
 export async function POST(request: NextRequest) {
   try {
-    // Check authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Check authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -27,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate a unique filename if no key is provided
-    const key = providedKey || `uploads/${session.user.id}/${uuidv4()}_${file.name}`;
+    const key = providedKey || `uploads/${userId}/${uuidv4()}_${file.name}`;
     
     // Get file as buffer
     const bytes = await file.arrayBuffer();
@@ -47,7 +46,7 @@ export async function POST(request: NextRequest) {
         filename: file.name,
         contentType: file.type,
         size: buffer.length,
-        userId: session.user.id,
+        userId: userId,
         url: `/uploads/${key.replace(/\//g, '_')}`,
         accessLevel,
         createdAt: new Date(),

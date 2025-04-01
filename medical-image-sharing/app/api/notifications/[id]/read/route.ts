@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { auth } from '@clerk/nextjs/server';
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    // Get session from NextAuth
-    const session = await getServerSession(authOptions);
+    // Get auth from Clerk
+    const session = await auth();
     
-    // Get token from session
-    const token = session?.accessToken;
+    // Get token from Clerk
+    const token = await session.getToken();
     
     // If no token, return unauthorized
     if (!token) {

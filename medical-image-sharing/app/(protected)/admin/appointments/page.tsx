@@ -22,8 +22,9 @@ import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
 import AppointmentList from '@/components/appointments/AppointmentList';
 import AppointmentForm from '@/components/appointments/AppointmentForm';
 import AppointmentDetail from '@/components/appointments/AppointmentDetail';
-import { useAuth } from '@/contexts/AuthContext';
-import { ApiClient } from '@/lib/api/client';
+import { useUser } from '@clerk/nextjs';
+import { adminClient } from '@/lib/api/adminClient';
+import { sharedClient } from '@/lib/api/sharedClient';
 import StatCard from '@/components/dashboard/StatCard';
 import { 
   CalendarMonth as CalendarIcon,
@@ -33,6 +34,7 @@ import {
   MedicalServices as DoctorIcon,
   Person as PatientIcon
 } from '@mui/icons-material';
+import { useRouter } from 'next/navigation';
 
 interface Appointment {
   id: string;
@@ -57,7 +59,8 @@ interface AppointmentStats {
 }
 
 export default function AdminAppointmentsPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
+  const router = useRouter();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
@@ -88,40 +91,52 @@ export default function AdminAppointmentsPage() {
   
   // Tab state
   const [tabValue, setTabValue] = useState(0);
-  
+
   // Fetch appointment stats
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        setLoading(true);
-        const apiClient = ApiClient.getInstance();
-        const todayResponse = await apiClient.getAppointments({ status: 'SCHEDULED,CONFIRMED', startDate: new Date().toISOString().split('T')[0] });
-        const upcomingResponse = await apiClient.getAppointments({ status: 'SCHEDULED,CONFIRMED' });
-        const completedResponse = await apiClient.getAppointments({ status: 'COMPLETED' });
-        const cancelledResponse = await apiClient.getAppointments({ status: 'CANCELLED' });
-        
-        // Get provider and patient counts
-        const providersResponse = await apiClient.getUsers({ role: 'PROVIDER' });
-        const patientsResponse = await apiClient.getUsers({ role: 'PATIENT' });
+  const fetchStats = async () => {
+    try {
+      setLoading(true);
+      
+      // Get appointment statistics from admin client
+      const statsResponse = await adminClient.getStatistics();
+      if (statsResponse.status === 'success') {
+        const { appointments, users } = statsResponse.data;
         
         setStats({
-          today: todayResponse.data?.totalCount || 0,
-          upcoming: upcomingResponse.data?.totalCount || 0,
-          completed: completedResponse.data?.totalCount || 0,
-          cancelled: cancelledResponse.data?.totalCount || 0,
-          providers: providersResponse.data?.pagination?.total || 0,
-          patients: patientsResponse.data?.pagination?.total || 0
+          today: appointments.today || 0,
+          upcoming: appointments.upcoming || 0,
+          completed: appointments.completed || 0,
+          cancelled: appointments.cancelled || 0,
+          providers: users.providers || 0,
+          patients: users.patients || 0
         });
-      } catch (error) {
-        console.error('Error fetching appointment stats:', error);
-        setError('Failed to load appointment statistics.');
-      } finally {
-        setLoading(false);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching appointment stats:', error);
+      setError('Failed to load appointment statistics.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Check if user is authorized and fetch stats
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      router.push('/auth/login');
+      return;
+    }
+
+    // Check if user has admin role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'ADMIN') {
+      router.push('/dashboard');
+      return;
+    }
     
     fetchStats();
-  }, [refreshTrigger]);
+  }, [isLoaded, user, router]);
   
   // Handle tab change
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {

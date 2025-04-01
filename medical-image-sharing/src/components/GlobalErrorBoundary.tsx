@@ -2,7 +2,7 @@
 
 import React, { Component, ErrorInfo } from 'react';
 import { Box, Button, Container, Typography, Paper, Alert } from '@mui/material';
-import { apiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api';
 import { ErrorLogRequest } from '@/lib/api/types';
 import { useToast, ToastContext } from '@/contexts/ToastContext';
 
@@ -53,7 +53,7 @@ class GlobalErrorBoundary extends Component<Props, State> {
       }
     };
 
-    apiClient.createAuditLog({
+    adminClient.createAuditLog({
       action: 'ERROR',
       resourceType: 'SYSTEM',
       resourceId: 'global-error-boundary',

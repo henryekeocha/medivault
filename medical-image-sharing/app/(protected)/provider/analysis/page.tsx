@@ -48,7 +48,7 @@ import {
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { ImageViewer } from '@/components/images/ImageViewer';
 import { ImageAnalysis as ImageAnalysisComponent } from '@/components/images/ImageAnalysis';
 import { ApiResponse, PaginatedResponse, ImageAnalysis, AnalysisFinding, Image } from '@/lib/api/types';
@@ -163,8 +163,7 @@ export default function ImageAnalysisPage() {
     queryKey: ['image', imageId],
     queryFn: async () => {
       if (!imageId) throw new Error('No image ID provided');
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getImage(imageId);
+      const response = await providerClient.getImage(imageId);
       
       if (response.status !== 'success' || !response.data) {
         throw new Error(response.error?.message || 'Failed to load image data');
@@ -186,8 +185,7 @@ export default function ImageAnalysisPage() {
     queryKey: ['analysis', imageId],
     queryFn: async () => {
       if (!imageId) throw new Error('No image ID provided');
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getAnalyses({ imageId });
+      const response = await providerClient.getAnalyses({ imageId });
       
       if (response.status !== 'success' || !response.data) {
         throw new Error(response.error?.message || 'Failed to load analysis data');
@@ -238,7 +236,7 @@ export default function ImageAnalysisPage() {
       setAiResults(newResults);
       
       // Update the analysis
-      return await ApiClient.getInstance().updateAnalysis(analysisData.id, {
+      return await providerClient.updateAnalysis(analysisData.id, {
         findings: JSON.stringify(newResults),
         confidence: selectedFinding.confidence || confidence
       });
@@ -258,16 +256,16 @@ export default function ImageAnalysisPage() {
     try {
       clearError();
       
-      // Get API client
-      const apiClient = ApiClient.getInstance();
-      
       if (analysisData?.id) {
         // Update existing analysis
-        const response = await apiClient.updateAnalysis(analysisData.id, {
+        const response = await providerClient.updateAnalysis(analysisData.id, {
           findings: JSON.stringify(aiResults),
-          notes,
           diagnosis,
-          confidence
+          confidence,
+          metadata: {
+            ...analysisData.metadata,
+            notes
+          }
         });
         
         if (response.status === 'success') {
@@ -287,7 +285,7 @@ export default function ImageAnalysisPage() {
           }
         };
         
-        const response = await apiClient.analyzeImage(createAnalysisData);
+        const response = await providerClient.analyzeImage(createAnalysisData);
         
         if (response.status === 'success') {
           showSuccess('Analysis created successfully');
@@ -309,8 +307,7 @@ export default function ImageAnalysisPage() {
     setShowAiSuggestions(false);
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getAIAnalysis(imageId);
+      const response = await providerClient.getAIAnalysis(imageId);
       
       if (response.status === 'success' && response.data) {
         const suggestions = response.data.suggestions || [];
@@ -375,8 +372,7 @@ export default function ImageAnalysisPage() {
     if (!analysisData?.id) return;
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.updateAnalysis(analysisData.id, {
+      const response = await providerClient.updateAnalysis(analysisData.id, {
         diagnosis,
         confidence,
         metadata: {

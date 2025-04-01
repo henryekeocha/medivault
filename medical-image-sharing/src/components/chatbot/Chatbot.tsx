@@ -24,8 +24,8 @@ import {
   Info as InfoIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { apiClient } from '@/lib/api/client';
-import { ChatMessage as ApiChatMessage, ChatSession } from '@/lib/api/types';
+import { sharedClient } from '@/lib/api/sharedClient';
+import { Message, ChatMessage as ApiChatMessage, ChatSession } from '@/lib/api/types';
 import { useToast } from '@/contexts/ToastContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState'; 
@@ -37,7 +37,7 @@ interface ChatbotProps {
 }
 
 // Extended ChatMessage with additional properties needed for UI
-interface ExtendedChatMessage extends Partial<ApiChatMessage> {
+interface ExtendedChatMessage extends Partial<Message> {
   id: string;
   content: string;
   createdAt: Date;
@@ -87,12 +87,11 @@ export function Chatbot({
     await withErrorHandling(async () => {
       setLoading(true);
       try {
-        const response = await apiClient.startChatSession({
-          userRole: 'PATIENT',
-          context: ['health inquiry']
-        });
+        const response = await sharedClient.getChats();
         
-        setSessionId(response.data.id);
+        // Create a new session ID
+        const newSessionId = `session-${Date.now()}`;
+        setSessionId(newSessionId);
         
         // Add the greeting message
         setMessages([
@@ -102,7 +101,7 @@ export function Chatbot({
             content: greeting,
             status: 'DELIVERED',
             createdAt: new Date(),
-            sessionId: response.data.id,
+            sessionId: newSessionId,
           },
         ]);
       } finally {
@@ -116,7 +115,7 @@ export function Chatbot({
       if (!sessionId) return;
       
       try {
-        await apiClient.endChatSession(sessionId);
+        // Just clear the session state since there's no direct end session method
         setSessionId(null);
         setMessages([]);
       } catch (err) {
@@ -145,8 +144,9 @@ export function Chatbot({
       // Send to the server
       setSending(true);
       try {
-        // Send the user message
-        await apiClient.sendChatMessage(sessionId, message);
+        // Send the user message to the bot
+        const botId = 'medical-assistant'; // ID for the medical assistant bot
+        await sharedClient.sendMessage(botId, message);
         
         // Simulate the bot thinking
         const thinkingMessage: ExtendedChatMessage = {
@@ -161,10 +161,10 @@ export function Chatbot({
         setMessages((prev) => [...prev, thinkingMessage]);
         
         // Wait for the bot response
-        const response = await apiClient.getChatMessages(sessionId, { limit: 1 });
+        const response = await sharedClient.getMessages(sessionId);
         
-        // Convert API ChatMessages to ExtendedChatMessage
-        const botMessages: ExtendedChatMessage[] = response.data.map((msg: ApiChatMessage) => ({
+        // Convert API Messages to ExtendedChatMessage
+        const botMessages: ExtendedChatMessage[] = response.data.map((msg: Message) => ({
           ...msg,
           type: 'BOT' as const,
           status: 'DELIVERED' as const,

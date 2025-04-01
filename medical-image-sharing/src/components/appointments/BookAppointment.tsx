@@ -20,9 +20,9 @@ import {
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, addDays, startOfDay } from 'date-fns';
-import { apiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
 import { ProviderSpecialty, Role } from '@prisma/client';
-import { User, CreateAppointmentRequest, PaginatedResponse } from '@/lib/api/types';
+import { User, CreateAppointmentRequest, PaginatedResponse, Appointment } from '@/lib/api/types';
 import { toast } from 'react-hot-toast';
 
 interface TimeSlot {
@@ -37,6 +37,7 @@ interface BookAppointmentProps {
 }
 
 interface ExtendedUser extends User {
+  specialty?: string;
   avatar?: string;
 }
 
@@ -58,18 +59,15 @@ export const BookAppointment: React.FC<BookAppointmentProps> = ({
   // Get current user
   const { data: currentUser } = useQuery({
     queryKey: ['currentUser'],
-    queryFn: () => apiClient.getCurrentUser()
+    queryFn: () => patientClient.getUserProfile()
   });
 
   // Fetch providers
   const { data: providersResponse, isLoading: loadingProviders } = useQuery({
     queryKey: ['providers', specialty],
     queryFn: async () => {
-      const response = await apiClient.getUsers({ 
-        role: Role.PROVIDER,
-        specialty: specialty || undefined
-      });
-      return response.data;
+      const response = await patientClient.getProviders();
+      return { data: response.data };
     }
   });
 
@@ -78,13 +76,10 @@ export const BookAppointment: React.FC<BookAppointmentProps> = ({
     queryKey: ['availability', selectedProvider?.id, selectedDate],
     queryFn: async () => {
       if (!selectedProvider?.id || !selectedDate) return { data: { availableSlots: [] } };
-      const response = await apiClient.getProviderAppointments(selectedProvider.id, {
-        startDate: startOfDay(selectedDate).toISOString(),
-        endDate: addDays(startOfDay(selectedDate), 1).toISOString()
-      });
+      const response = await patientClient.getAppointment(selectedProvider.id);
       // Transform booked slots into available slots
-      const appointments = response.data.items || [];
-      const bookedSlots = appointments.map(apt => {
+      const appointments = response.data;
+      const bookedSlots = appointments.map((apt: Appointment) => {
         return format(new Date(apt.scheduledFor), 'HH:mm');
       });
       const allSlots = generateTimeSlots();
@@ -104,9 +99,11 @@ export const BookAppointment: React.FC<BookAppointmentProps> = ({
   const bookAppointment = useMutation({
     mutationFn: (data: CreateAppointmentRequest) => {
       const appointmentDate = new Date(data.scheduledFor);
-      return apiClient.createAppointment({
-        ...data,
-        scheduledFor: appointmentDate
+      return patientClient.createAppointment({
+        providerId: data.providerId,
+        datetime: appointmentDate.toISOString(),
+        notes: data.notes,
+        type: 'CONSULTATION'
       });
     },
     onSuccess: () => {
@@ -236,14 +233,13 @@ export const BookAppointment: React.FC<BookAppointmentProps> = ({
               value={selectedDate}
               onChange={(newValue) => setSelectedDate(newValue as Date | null)}
               disablePast
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  fullWidth
-                  margin="normal"
-                  sx={{ width: '100%' }}
-                />
-              )}
+              slotProps={{
+                textField: {
+                  fullWidth: true,
+                  margin: "normal",
+                  sx: { width: '100%' }
+                }
+              }}
             />
           </Box>
         );

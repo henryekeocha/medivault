@@ -9,59 +9,56 @@ datasource db {
 }
 
 model User {
-  id                    String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  name                  String
-  email                 String                @unique
-  username              String?               @unique
-  password              String
-  role                  Role                  @default(PATIENT)
-  specialty             ProviderSpecialty?
-  emailVerified         DateTime?
-  image                 String?
-  isActive              Boolean               @default(true)
-  twoFactorEnabled      Boolean               @default(false)
-  twoFactorSecret       String?
-  lastLoginAt           DateTime?
-  lastLoginIp           String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  annotations           Annotation[]
-  appointmentsAsDr      Appointment[]         @relation("Doctor")
-  appointments          Appointment[]         @relation("Patient")
-  auditLogs             AuditLog[]
-  chatSessions          ChatSession[]
-  fileAccessLogs        FileAccessLog[]
-  healthMetrics         HealthMetric[]
-  metricsByProvider     HealthMetric[]        @relation("MetricProvider")
-  images                Image[]
-  medicalRecords        MedicalRecord[]
-  receivedMessages      Message[]             @relation("MessageReceiver")
-  sentMessages          Message[]             @relation("MessageSender")
-  notifications         Notification[]
-  patientsAsDr          PatientProvider[]     @relation("Doctor")
-  providers             PatientProvider[]     @relation("Patient")
-  prescriptions         Prescription[]
-  prescriptionsProvided Prescription[]        @relation("PrescriptionProvider")
-  providerAnalytics     ProviderAnalytics[]
-  ProviderVerification  ProviderVerification?
-  securityLogs          SecurityLog[]
-  sharedByMe            Share[]               @relation("SharedBy")
-  sharedWithMe          Share[]               @relation("SharedWith")
-  storageUsage          StorageUsage[]
-  systemLogs            SystemLog[]
-  activities            UserActivity[]
-  settings              UserSettings?
-  userDevices           UserDevice[]
-  authEvents            AuthEvent[]
+  id                                           String              @id @default(cuid())
+  authId                                       String              @unique
+  name                                         String
+  email                                        String              @unique
+  username                                     String?             @unique
+  password                                     String?             // Made optional since we're using Clerk
+  role                                         Role                @default(PATIENT)
+  specialty                                    ProviderSpecialty?
+  emailVerified                                DateTime?
+  image                                        String?
+  isActive                                     Boolean             @default(true)
+  lastLoginAt                                  DateTime?
+  lastLoginIp                                  String?
+  lastActiveAt                                 DateTime?
+  createdAt                                    DateTime            @default(now())
+  updatedAt                                    DateTime            @updatedAt
+  annotations                                  Annotation[]
+  appointmentsAsDr                             Appointment[]       @relation("Doctor")
+  appointments                                 Appointment[]       @relation("Patient")
+  auditLogs                                    AuditLog[]
+  chatSessions                                 ChatSession[]
+  healthMetrics                                HealthMetric[]
+  metricsByProvider                            HealthMetric[]      @relation("MetricProvider")
+  images                                       Image[]
+  medicalRecords                               MedicalRecord[]
+  MedicalRecord_MedicalRecord_providerIdToUser MedicalRecord[]     @relation("MedicalRecord_providerIdToUser")
+  receivedMessages                             Message[]           @relation("MessageReceiver")
+  sentMessages                                 Message[]           @relation("MessageSender")
+  notifications                                Notification[]
+  patientsAsDr                                 PatientProvider[]   @relation("Doctor")
+  providers                                    PatientProvider[]   @relation("Patient")
+  prescriptions                                Prescription[]
+  providerAnalytics                            ProviderAnalytics[]
+  securityLogs                                 SecurityLog[]
+  sharedByMe                                   Share[]             @relation("SharedBy")
+  sharedWithMe                                 Share[]             @relation("SharedWith")
+  storageUsage                                 StorageUsage[]
+  systemLogs                                   SystemLog[]
+  activities                                   UserActivity[]
+  settings                                     UserSettings?
 
   @@index([email])
   @@index([username])
   @@index([role])
+  @@index([authId])
 }
 
 model UserSettings {
-  id                   String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId               String   @unique @db.Uuid
+  id                   String   @id @default(cuid())
+  userId               String
   emailNotifications   Boolean  @default(true)
   pushNotifications    Boolean  @default(true)
   messageNotifications Boolean  @default(true)
@@ -78,12 +75,13 @@ model UserSettings {
   updatedAt            DateTime @updatedAt
   user                 User     @relation(fields: [userId], references: [id])
 
+  @@unique([userId])
   @@index([userId])
 }
 
 model SecurityLog {
-  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId     String   @db.Uuid
+  id         String   @id @default(cuid())
+  userId     String
   action     String
   ipAddress  String?
   userAgent  String?
@@ -97,16 +95,15 @@ model SecurityLog {
 }
 
 model Image {
-  id                String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id                String               @id @default(cuid())
   filename          String
-  fileType          String               @default("application/dicom")
-  fileExtension     String               @default(".dcm")
+  fileType          String
   fileSize          Int
   uploadDate        DateTime             @default(now())
   metadata          Json?
   status            ImageStatus          @default(PROCESSING)
   type              ImageType            @default(OTHER)
-  patientId         String?              @db.Uuid
+  patientId         String?
   studyDate         DateTime?
   modality          String?
   bodyPart          String?
@@ -118,12 +115,11 @@ model Image {
   errorMessage      String?
   lastViewed        DateTime?
   viewCount         Int                  @default(0)
-  userId            String               @db.Uuid
+  userId            String
   s3Key             String               @unique
   s3Url             String
   annotations       Annotation[]
   appointments      Appointment[]
-  fileAccessLogs    FileAccessLog[]
   user              User                 @relation(fields: [userId], references: [id])
   medicalRecords    MedicalRecordImage[]
   shares            Share[]
@@ -136,9 +132,9 @@ model Image {
 }
 
 model MedicalRecordImage {
-  id              String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  medicalRecordId String        @db.Uuid
-  imageId         String        @db.Uuid
+  id              String        @id @default(cuid())
+  medicalRecordId String
+  imageId         String
   createdAt       DateTime      @default(now())
   image           Image         @relation(fields: [imageId], references: [id])
   medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id])
@@ -149,7 +145,7 @@ model MedicalRecordImage {
 }
 
 model Share {
-  id               String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id               String          @id @default(cuid())
   type             ShareType       @default(LINK)
   permissions      SharePermission @default(VIEW)
   shareUrl         String?         @unique
@@ -161,9 +157,9 @@ model Share {
   recipientEmail   String?
   emailSent        Boolean         @default(false)
   emailSentAt      DateTime?
-  imageId          String          @db.Uuid
-  sharedByUserId   String          @db.Uuid
-  sharedWithUserId String?         @db.Uuid
+  imageId          String
+  sharedByUserId   String
+  sharedWithUserId String?
   token            String?         @unique
   image            Image           @relation(fields: [imageId], references: [id])
   sharedByUser     User            @relation("SharedBy", fields: [sharedByUserId], references: [id])
@@ -178,14 +174,14 @@ model Share {
 }
 
 model Annotation {
-  id          String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id          String         @id @default(cuid())
   type        AnnotationType
   content     String
   coordinates Json
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
-  imageId     String         @db.Uuid
-  userId      String         @db.Uuid
+  imageId     String
+  userId      String
   image       Image          @relation(fields: [imageId], references: [id])
   user        User           @relation(fields: [userId], references: [id])
 
@@ -194,28 +190,28 @@ model Annotation {
 }
 
 model Message {
-  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id          String    @id @default(cuid())
   content     String
   attachments Json?
   createdAt   DateTime  @default(now())
   readAt      DateTime?
-  senderId    String    @db.Uuid
-  recipientId String    @db.Uuid
-  recipient   User      @relation("MessageReceiver", fields: [recipientId], references: [id])
-  sender      User      @relation("MessageSender", fields: [senderId], references: [id])
+  senderId    String
+  recipientId String
+  recipient   User      @relation("MessageReceiver", fields: [recipientId], references: [id], onDelete: Cascade)
+  sender      User      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([senderId])
   @@index([recipientId])
 }
 
 model Notification {
-  id        String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id        String           @id @default(cuid())
   type      NotificationType
   content   String
   read      Boolean          @default(false)
   metadata  Json?
   createdAt DateTime         @default(now())
-  userId    String           @db.Uuid
+  userId    String
   user      User             @relation(fields: [userId], references: [id])
 
   @@index([userId])
@@ -223,13 +219,13 @@ model Notification {
 }
 
 model PatientProvider {
-  id        String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id        String        @id @default(cuid())
   status    PatientStatus @default(ACTIVE)
   startDate DateTime      @default(now())
   endDate   DateTime?
   notes     String?
-  patientId String        @db.Uuid
-  doctorId  String        @db.Uuid
+  patientId String
+  doctorId  String
   metadata  Json?
   doctor    User          @relation("Doctor", fields: [doctorId], references: [id])
   patient   User          @relation("Patient", fields: [patientId], references: [id])
@@ -240,53 +236,50 @@ model PatientProvider {
 }
 
 model Appointment {
-  id        String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id        String            @id @default(cuid())
+  datetime  DateTime
   status    AppointmentStatus @default(SCHEDULED)
   notes     String?
-  patientId String            @db.Uuid
-  doctorId  String            @db.Uuid
-  imageId   String?           @db.Uuid
+  patientId String
+  doctorId  String
+  imageId   String?
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
-  endTime   DateTime
-  startTime DateTime
   doctor    User              @relation("Doctor", fields: [doctorId], references: [id])
   image     Image?            @relation(fields: [imageId], references: [id])
   patient   User              @relation("Patient", fields: [patientId], references: [id])
 
   @@index([patientId])
   @@index([doctorId])
-  @@index([startTime])
-  @@index([endTime])
 }
 
 model MedicalRecord {
-  id         String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  patientId  String               @db.Uuid
-  providerId String
-  recordType String
-  title      String
-  content    String
-  createdAt  DateTime             @default(now())
-  updatedAt  DateTime             @updatedAt
-  patient    User                 @relation(fields: [patientId], references: [id])
-  images     MedicalRecordImage[]
+  id                                  String               @id @default(cuid())
+  patientId                           String
+  providerId                          String
+  recordType                          String
+  title                               String
+  content                             String
+  createdAt                           DateTime             @default(now())
+  updatedAt                           DateTime             @updatedAt
+  patient                             User                 @relation(fields: [patientId], references: [id])
+  User_MedicalRecord_providerIdToUser User                 @relation("MedicalRecord_providerIdToUser", fields: [providerId], references: [id])
+  images                              MedicalRecordImage[]
 
   @@index([patientId])
   @@index([providerId])
-  @@index([createdAt])
 }
 
 model HealthMetric {
-  id         String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id         String           @id @default(cuid())
   type       HealthMetricType
   value      Float
   unit       String?
   timestamp  DateTime         @default(now())
   notes      String?
   metadata   Json?
-  patientId  String           @db.Uuid
-  providerId String?          @db.Uuid
+  patientId  String
+  providerId String?
   patient    User             @relation(fields: [patientId], references: [id])
   provider   User?            @relation("MetricProvider", fields: [providerId], references: [id])
 
@@ -297,43 +290,41 @@ model HealthMetric {
 }
 
 model Prescription {
-  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id           String    @id @default(cuid())
   medication   String
   dosage       String
   frequency    String
   startDate    DateTime
   endDate      DateTime?
   instructions String?
-  patientId    String    @db.Uuid
+  patientId    String
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
-  notes        String?
-  providerId   String    @db.Uuid
   patient      User      @relation(fields: [patientId], references: [id])
-  provider     User      @relation("PrescriptionProvider", fields: [providerId], references: [id])
 
   @@index([patientId])
-  @@index([providerId])
-  @@index([startDate])
 }
 
 model ProviderAnalytics {
-  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  providerId String   @db.Uuid
-  timestamp  DateTime @default(now())
-  metric     String
-  value      Float
-  provider   User     @relation(fields: [providerId], references: [id])
+  id              String   @id @default(cuid())
+  providerId      String
+  activePatients  Int      @default(0)
+  totalPatients   Int      @default(0)
+  averageRating   Float?
+  responseTime    Float?
+  imageReviewTime Float?
+  timestamp       DateTime @default(now())
+  provider        User     @relation(fields: [providerId], references: [id])
 
   @@index([providerId])
   @@index([timestamp])
 }
 
 model StorageUsage {
-  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId    String   @db.Uuid
+  id        String   @id @default(cuid())
+  userId    String
+  bytesUsed BigInt
   timestamp DateTime @default(now())
-  bytes     BigInt
   user      User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
@@ -341,85 +332,84 @@ model StorageUsage {
 }
 
 model SystemLog {
-  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id        String   @id @default(cuid())
+  type      String
   message   String
   metadata  Json?
-  userId    String?  @db.Uuid
-  level     String
-  timestamp DateTime @default(now())
+  userId    String?
+  createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id])
 
-  @@index([level])
-  @@index([timestamp])
   @@index([userId])
+  @@index([createdAt])
+  @@index([type])
 }
 
 model UserActivity {
-  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId    String   @db.Uuid
-  timestamp DateTime @default(now())
-  details   Json?
-  type      String
-  user      User     @relation(fields: [userId], references: [id])
+  id           String   @id @default(cuid())
+  userId       String
+  action       String
+  resourceType String?
+  resourceId   String?
+  timestamp    DateTime @default(now())
+  metadata     Json?
+  user         User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([timestamp])
+  @@index([action])
 }
 
 model ChatSession {
-  id        String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId    String        @db.Uuid
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  title     String?
-  messages  ChatMessage[]
-  user      User          @relation(fields: [userId], references: [id])
+  id          String        @id @default(cuid())
+  userId      String
+  startedAt   DateTime      @default(now())
+  endedAt     DateTime?
+  isActive    Boolean       @default(true)
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  ChatMessage ChatMessage[]
+  user        User          @relation(fields: [userId], references: [id])
 
   @@index([userId])
+  @@index([isActive])
 }
 
 model ChatMessage {
-  id            String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  content       String
-  createdAt     DateTime    @default(now())
-  chatSessionId String      @db.Uuid
-  role          String
-  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id])
+  id          String            @id @default(cuid())
+  sessionId   String
+  type        ChatMessageType
+  content     String
+  status      ChatMessageStatus @default(SENT)
+  metadata    Json?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  ChatSession ChatSession       @relation(fields: [sessionId], references: [id])
 
-  @@index([chatSessionId])
+  @@index([sessionId])
+  @@index([status])
+  @@index([type])
 }
 
 model AuditLog {
-  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  action    String
-  userId    String   @db.Uuid
-  timestamp DateTime @default(now())
-  details   Json?
-  user      User     @relation(fields: [userId], references: [id])
+  id         String   @id @default(cuid())
+  action     String
+  userId     String
+  resourceId String?
+  details    String
+  timestamp  DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([timestamp])
-}
-
-model FileAccessLog {
-  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId          String   @db.Uuid
-  fileId          String   @db.Uuid
-  accessType      String
-  accessTimestamp DateTime @default(now())
-  ipAddress       String?
-  userAgent       String?
-  metadata        Json?
-  file            Image    @relation(fields: [fileId], references: [id], onDelete: Cascade)
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([fileId])
-  @@index([accessTimestamp])
+  @@index([action])
 }
 
 model Analytics {
-  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  id        String   @id @default(cuid())
   type      String
   metric    String
   value     Float
@@ -428,67 +418,6 @@ model Analytics {
 
   @@index([timestamp])
   @@index([type])
-}
-
-model ProviderVerification {
-  id                    String             @id
-  licenseNumber         String
-  licenseState          String
-  licenseExpiryDate     DateTime
-  specialtyName         String?
-  identityDocumentS3Key String?
-  licenseDocumentS3Key  String?
-  selfieS3Key           String?
-  verificationStatus    VerificationStatus @default(PENDING)
-  verifiedAt            DateTime?
-  rejectionReason       String?
-  rejectedAt            DateTime?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime
-  lastVerificationDate  DateTime?
-  nextVerificationDate  DateTime?
-  verifiedBy            String?
-  notes                 String?
-  providerId            String             @unique @db.Uuid
-  User                  User               @relation(fields: [providerId], references: [id])
-
-  @@index([licenseNumber])
-  @@index([providerId])
-  @@index([verificationStatus])
-}
-
-model UserDevice {
-  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId      String    @db.Uuid
-  deviceName  String
-  deviceType  String?
-  browser     String?
-  os          String?
-  remembered  Boolean   @default(false)
-  lastUsedAt  DateTime  @default(now())
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  user        User      @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([lastUsedAt])
-}
-
-model AuthEvent {
-  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId      String    @db.Uuid
-  eventType   String
-  ipAddress   String
-  deviceName  String?
-  browser     String?
-  os          String?
-  success     Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  user        User      @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([createdAt])
-  @@index([eventType])
 }
 
 enum Role {
@@ -519,29 +448,28 @@ enum ShareType {
 
 enum SharePermission {
   VIEW
+  COMMENT
   EDIT
-  FULL
 }
 
 enum AnnotationType {
   MARKER
   MEASUREMENT
-  NOTE
+  TEXT
+  DRAWING
 }
 
 enum NotificationType {
-  NEW_SHARE
-  NEW_MESSAGE
-  ANNOTATION_ADDED
-  SECURITY_ALERT
-  SYSTEM_UPDATE
+  APPOINTMENT
+  MESSAGE
+  SHARE
+  SYSTEM
 }
 
 enum PatientStatus {
   ACTIVE
   INACTIVE
-  PENDING_REVIEW
-  ARCHIVED
+  PENDING
 }
 
 enum AppointmentStatus {
@@ -557,27 +485,6 @@ enum ProviderSpecialty {
   CARDIOLOGY
   NEUROLOGY
   ORTHOPEDICS
-  ONCOLOGY
-  GASTROENTEROLOGY
-  PEDIATRICS
-  INTERNAL_MEDICINE
-  FAMILY_MEDICINE
-  EMERGENCY_MEDICINE
-  OBSTETRICS_GYNECOLOGY
-  DERMATOLOGY
-  OPHTHALMOLOGY
-  PSYCHIATRY
-  UROLOGY
-  OTOLARYNGOLOGY
-  ANESTHESIOLOGY
-  PATHOLOGY
-  NUCLEAR_MEDICINE
-  PHYSICAL_MEDICINE
-  PLASTIC_SURGERY
-  GENERAL_SURGERY
-  VASCULAR_SURGERY
-  THORACIC_SURGERY
-  NEPHROLOGY
   OTHER
 }
 
@@ -601,11 +508,4 @@ enum HealthMetricType {
   APPOINTMENT_ATTENDANCE
   IMAGING_FREQUENCY
   PROVIDER_INTERACTION
-}
-
-enum VerificationStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  EXPIRED
 }

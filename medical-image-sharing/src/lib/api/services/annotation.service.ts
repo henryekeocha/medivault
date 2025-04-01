@@ -1,20 +1,27 @@
-import { ApiClient } from '../client';
+import { patientClient } from '../patientClient';
+import { providerClient } from '../providerClient';
 import type { ApiResponse, Annotation, PaginatedResponse } from '../types';
 import { AnnotationType } from '@prisma/client';
 
 export class AnnotationService {
-  private static instance: AnnotationService;
-  private client: ApiClient;
+  private patientClient;
+  private providerClient;
+  private userRole: 'PATIENT' | 'PROVIDER' | null = null;
 
-  private constructor() {
-    this.client = ApiClient.getInstance();
+  constructor() {
+    this.patientClient = patientClient;
+    this.providerClient = providerClient;
   }
 
-  public static getInstance(): AnnotationService {
-    if (!AnnotationService.instance) {
-      AnnotationService.instance = new AnnotationService();
+  setUserRole(role: 'PATIENT' | 'PROVIDER') {
+    this.userRole = role;
+  }
+
+  private getClient() {
+    if (!this.userRole) {
+      throw new Error('User role not set. Call setUserRole first.');
     }
-    return AnnotationService.instance;
+    return this.userRole === 'PATIENT' ? this.patientClient : this.providerClient;
   }
 
   async createAnnotation(data: {
@@ -23,7 +30,7 @@ export class AnnotationService {
     content: string;
     coordinates: Record<string, any>;
   }): Promise<ApiResponse<Annotation>> {
-    return this.client.post<ApiResponse<Annotation>>('/annotations', data);
+    return this.getClient().createAnnotation(data);
   }
 
   async getAnnotations(params?: {
@@ -33,22 +40,22 @@ export class AnnotationService {
     page?: number;
     limit?: number;
   }): Promise<ApiResponse<PaginatedResponse<Annotation>>> {
-    return this.client.get<ApiResponse<PaginatedResponse<Annotation>>>('/annotations', { params });
+    return this.getClient().getAnnotations(params?.imageId || '');
   }
 
   async getAnnotation(id: string): Promise<ApiResponse<Annotation>> {
-    return this.client.get<ApiResponse<Annotation>>(`/annotations/${id}`);
+    return this.getClient().getAnnotation(id);
   }
 
   async updateAnnotation(
     id: string,
     data: Partial<Annotation>
   ): Promise<ApiResponse<Annotation>> {
-    return this.client.patch<ApiResponse<Annotation>>(`/annotations/${id}`, data);
+    return this.getClient().updateAnnotation(id, data);
   }
 
   async deleteAnnotation(id: string): Promise<ApiResponse<void>> {
-    return this.client.delete<ApiResponse<void>>(`/annotations/${id}`);
+    return this.getClient().deleteAnnotation(id);
   }
 
   // Helper methods for annotation types
@@ -87,4 +94,6 @@ export class AnnotationService {
       distance: number;
     };
   }
-} 
+}
+
+export const annotationService = new AnnotationService(); 

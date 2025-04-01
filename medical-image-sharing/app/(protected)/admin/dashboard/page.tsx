@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
+import { withProtectedRoute } from '@/components/ProtectedRoute';
 import {
   Container,
   Grid,
@@ -50,7 +51,7 @@ import {
   Backup as BackupIcon,
   Restore as RestoreIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
 
 // Data interfaces
 interface SystemStatus {
@@ -98,9 +99,9 @@ interface Alert {
   timestamp: string;
 }
 
-export default function AdminDashboardPage() {
+function AdminDashboardPage() {
   const router = useRouter();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isLoaded } = useUser();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -129,10 +130,8 @@ export default function AdminDashboardPage() {
     setError(null);
     
     try {
-      const apiClient = ApiClient.getInstance();
-      
       // Fetch statistics
-      const statsResponse = await apiClient.getAdminStatistics();
+      const statsResponse = await adminClient.getStatistics();
       if (statsResponse.status === 'success') {
         const { userStats, imageStats } = statsResponse.data;
         setUserStats(userStats);
@@ -142,7 +141,7 @@ export default function AdminDashboardPage() {
       }
       
       // Fetch system health
-      const healthResponse = await apiClient.getSystemHealth();
+      const healthResponse = await adminClient.getSystemHealth();
       if (healthResponse.status === 'success') {
         setSystemStatus(healthResponse.data);
       } else {
@@ -150,24 +149,24 @@ export default function AdminDashboardPage() {
       }
       
       // Fetch activity logs
-      const logsResponse = await apiClient.getActivityLogs({ 
+      const logsResponse = await adminClient.getActivityLogs({ 
         limit: 10, 
         page: 1 
       });
       if (logsResponse.status === 'success') {
         setRecentActivity(logsResponse.data.data.map(item => ({
           id: item.id,
-          type: item.actionType,
-          user: item.userName,
-          action: item.description,
-          timestamp: new Date(item.createdAt).toLocaleString()
+          type: item.action,
+          user: item.user?.name || 'Unknown',
+          action: item.details?.description || item.action,
+          timestamp: new Date(item.timestamp).toLocaleString()
         })));
       } else {
         console.error('Failed to fetch activity logs:', logsResponse.error);
       }
 
       // Fetch system alerts
-      const alertsResponse = await apiClient.getSystemHealth();
+      const alertsResponse = await adminClient.getSystemAlerts();
       if (alertsResponse.status === 'success') {
         setSystemAlerts(alertsResponse.data.alerts || []);
       } else {
@@ -222,18 +221,22 @@ export default function AdminDashboardPage() {
   };
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isLoaded) return;
+
+    if (!user) {
       router.push('/auth/login');
       return;
     }
 
-    if (user?.role !== 'ADMIN') {
+    // Check if user has admin role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'ADMIN') {
       router.push('/dashboard');
       return;
     }
     
     fetchDashboardData();
-  }, [isAuthenticated, user?.role, router]);
+  }, [isLoaded, user, router]);
 
   const handleRefresh = () => {
     fetchDashboardData();
@@ -658,10 +661,10 @@ export default function AdminDashboardPage() {
                       <Grid item xs={6}>
                         <Typography variant="body2" color="text.secondary">Security Events</Typography>
                         <Typography variant="h5">18</Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Box sx={{ display: 'flex', gap: 1 }}>
                           <Chip size="small" label="3 critical" color="error" sx={{ mr: 1 }} />
                           <Chip size="small" label="15 warnings" color="warning" />
-                        </Typography>
+                        </Box>
                       </Grid>
                     </Grid>
                   </Paper>
@@ -706,18 +709,18 @@ export default function AdminDashboardPage() {
                         <Typography variant="body1" fontWeight="medium">
                           Today, 2:30 AM
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Box>
                           <Chip size="small" label="Successful" color="success" />
-                        </Typography>
+                        </Box>
                       </Grid>
                       <Grid item xs={6}>
                         <Typography variant="body2" color="text.secondary">Next Scheduled</Typography>
                         <Typography variant="body1" fontWeight="medium">
                           Tomorrow, 2:30 AM
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Box>
                           <Chip size="small" label="Daily backup" color="info" />
-                        </Typography>
+                        </Box>
                       </Grid>
                     </Grid>
                   </Paper>
@@ -759,4 +762,9 @@ export default function AdminDashboardPage() {
       </Box>
     </Box>
   );
-} 
+}
+
+export default withProtectedRoute(AdminDashboardPage, {
+  allowedRoles: ['ADMIN'],
+  requireAuth: true,
+}); 

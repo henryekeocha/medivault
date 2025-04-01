@@ -2,7 +2,7 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { ImageStatus, ImageType } from '@prisma/client';
 import crypto from 'crypto';
 import { AnnotationType } from '@prisma/client';

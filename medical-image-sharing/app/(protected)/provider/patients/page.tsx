@@ -24,6 +24,18 @@ import {
   CircularProgress,
   Alert,
   Pagination,
+  Breadcrumbs,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TablePagination,
+  FormControl,
+  InputLabel,
+  Select,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -34,62 +46,129 @@ import {
   Phone as PhoneIcon,
   Email as EmailIcon,
   FilterList as FilterIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import { ApiClient } from '@/lib/api/client';
-import { User, Patient } from '@/lib/api/types';
+import { useUser } from '@clerk/nextjs';
+import { providerClient } from '@/lib/api/providerClient';
+import { useToast } from '@/contexts/ToastContext';
+import { useErrorHandler } from '@/hooks/useErrorHandler';
+import { LoadingState } from '@/components/LoadingState';
+import Link from 'next/link';
+
+interface Patient {
+  id: string;
+  name: string;
+  dateOfBirth: string;
+  gender: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  contact: {
+    email: string;
+    phone?: string;
+  };
+}
+
+interface PatientFormData {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  dateOfBirth: string;
+  gender: string;
+}
+
+// Helper function to convert form data to API format
+const convertFormDataToPatient = (formData: PatientFormData): Omit<Patient, 'id'> => {
+  return {
+    name: `${formData.firstName} ${formData.lastName}`.trim(),
+    dateOfBirth: formData.dateOfBirth,
+    gender: formData.gender,
+    status: 'ACTIVE',
+    contact: {
+      email: formData.email,
+      phone: formData.phone,
+    },
+  };
+};
 
 export default function PatientsPage() {
   const router = useRouter();
+  const { user, isLoaded } = useUser();
+  const { showToast } = useToast();
+  const { handleError, withErrorHandling, clearErrors } = useErrorHandler({
+    context: 'Provider Patients',
+    showToastByDefault: true
+  });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [openDialog, setOpenDialog] = useState(false);
+  const [formData, setFormData] = useState<PatientFormData>({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    dateOfBirth: '',
+    gender: '',
+  });
 
   const ITEMS_PER_PAGE = 9;
 
   useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      return;
+    }
+
+    // Check if user has provider role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PROVIDER') {
+      return;
+    }
+
     fetchPatients();
-  }, [page, filterStatus]);
+  }, [isLoaded, user, withErrorHandling]);
 
   const fetchPatients = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getProviderPatients();
+      const response = await withErrorHandling(
+        async () => providerClient.getPatients({
+          page,
+          limit: ITEMS_PER_PAGE,
+          search: searchQuery,
+          status: filterStatus === 'all' ? undefined : filterStatus
+        }),
+        { showToast: true }
+      );
       
       if (response.status === 'success') {
-        // Filter patients based on search query and status
-        let filteredPatients = response.data;
-        
-        if (searchQuery) {
-          const query = searchQuery.toLowerCase();
-          filteredPatients = filteredPatients.filter(patient => 
-            (patient.username?.toLowerCase() || '').includes(query) ||
-            (patient.email?.toLowerCase() || '').includes(query)
-          );
-        }
-        
-        if (filterStatus !== 'all') {
-          filteredPatients = filteredPatients.filter(patient => 
-            patient.isActive === (filterStatus === 'active')
-          );
-        }
-        
-        // Handle pagination manually since we're filtering client-side
-        const startIndex = (page - 1) * ITEMS_PER_PAGE;
-        const endIndex = startIndex + ITEMS_PER_PAGE;
-        const paginatedPatients = filteredPatients.slice(startIndex, endIndex);
-        
-        setPatients(paginatedPatients.map(user => user as unknown as Patient));
-        setTotalPages(Math.ceil(filteredPatients.length / ITEMS_PER_PAGE));
+        // Map User data to Patient type
+        const patientData = response.data.data.map(user => ({
+          id: user.id,
+          name: user.name,
+          dateOfBirth: user.birthdate || '',
+          gender: user.gender || '',
+          status: user.role === 'PATIENT' ? 'ACTIVE' : 'INACTIVE',
+          contact: {
+            email: user.email,
+            phone: user.phoneNumber
+          }
+        }));
+        const patientsWithCorrectStatus = patientData.map(patient => ({
+          ...patient,
+          status: patient.status as 'ACTIVE' | 'INACTIVE'
+        }));
+        setPatients(patientsWithCorrectStatus);
       } else {
         setError('Failed to load patients');
       }
@@ -101,18 +180,23 @@ export default function PatientsPage() {
     }
   };
 
-  const handleSearch = () => {
-    setPage(1); // Reset to first page when searching
-    fetchPatients();
+  const handleSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(event.target.value);
+    setPage(0);
   };
 
   const handleFilterChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFilterStatus(event.target.value);
-    setPage(1); // Reset to first page when filtering
+    setPage(0);
   };
 
-  const handlePageChange = (event: React.ChangeEvent<unknown>, value: number) => {
-    setPage(value);
+  const handleChangePage = (event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
   };
 
   const handleViewPatient = (patientId: string) => {
@@ -129,11 +213,11 @@ export default function PatientsPage() {
 
   const openDeleteDialog = (patient: Patient) => {
     setSelectedPatient(patient);
-    setIsDeleteDialogOpen(true);
+    setOpenDialog(true);
   };
 
   const closeDeleteDialog = () => {
-    setIsDeleteDialogOpen(false);
+    setOpenDialog(false);
     setSelectedPatient(null);
   };
 
@@ -141,191 +225,298 @@ export default function PatientsPage() {
     if (!selectedPatient) return;
     
     try {
-      setLoading(true);
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.deactivateUser(selectedPatient.id, 'Removed by provider');
-      
-      if (response.status === 'success') {
-        // Remove patient from the list or refresh the list
-        fetchPatients();
-      } else {
-        setError('Failed to delete patient');
-      }
+      await withErrorHandling(
+        async () => providerClient.deactivateUser(selectedPatient.id, 'Removed by provider'),
+        { showToast: true }
+      );
+      showToast('Patient deactivated successfully', 'success');
+      fetchPatients();
     } catch (err) {
       console.error('Error deleting patient:', err);
       setError('An error occurred while deleting the patient');
     } finally {
-      setLoading(false);
       closeDeleteDialog();
     }
   };
 
+  const handleOpenDialog = (patient?: Patient) => {
+    if (patient) {
+      setSelectedPatient(patient);
+      const [firstName, ...lastNameParts] = patient.name.split(' ');
+      setFormData({
+        firstName,
+        lastName: lastNameParts.join(' '),
+        email: patient.contact.email,
+        phone: patient.contact.phone || '',
+        dateOfBirth: patient.dateOfBirth,
+        gender: patient.gender,
+      });
+    } else {
+      setSelectedPatient(null);
+      setFormData({
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: '',
+        dateOfBirth: '',
+        gender: '',
+      });
+    }
+    setOpenDialog(true);
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const patientData = convertFormDataToPatient(formData);
+      
+      if (selectedPatient) {
+        await withErrorHandling(
+          async () => providerClient.updatePatient(selectedPatient.id, patientData),
+          { showToast: true }
+        );
+        showToast('Patient updated successfully', 'success');
+      } else {
+        await withErrorHandling(
+          async () => providerClient.createPatient(formData),
+          { showToast: true }
+        );
+        showToast('Patient created successfully', 'success');
+      }
+      handleCloseDialog();
+      fetchPatients();
+    } catch (error) {
+      console.error('Error saving patient:', error);
+    }
+  };
+
+  const handleCloseDialog = () => {
+    setOpenDialog(false);
+    setSelectedPatient(null);
+    setFormData({
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      dateOfBirth: '',
+      gender: '',
+    });
+  };
+
+  const filteredPatients = patients.filter((patient) =>
+    Object.values(patient).some((value) =>
+      value.toString().toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  );
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  // Check if user has provider role in metadata
+  const userRole = user.publicMetadata.role;
+  if (userRole !== 'PROVIDER') {
+    return null;
+  }
+
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          My Patients
-        </Typography>
+    <Container maxWidth="xl" sx={{ py: 3 }}>
+      <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
+        <Link href="/provider/dashboard" passHref>
+          <Typography color="inherit" sx={{ cursor: 'pointer' }}>Dashboard</Typography>
+        </Link>
+        <Typography color="text.primary">Patients</Typography>
+      </Breadcrumbs>
+
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4">Patients</Typography>
         <Button
           variant="contained"
-          color="primary"
           startIcon={<AddIcon />}
-          onClick={handleAddPatient}
+          onClick={() => handleOpenDialog()}
         >
-          Add New Patient
+          Add Patient
         </Button>
       </Box>
 
-      <Box sx={{ mb: 4, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-        <TextField
-          label="Search Patients"
-          variant="outlined"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-          sx={{ flexGrow: 1, maxWidth: { xs: '100%', sm: 300 } }}
+      <TextField
+        fullWidth
+        variant="outlined"
+        placeholder="Search patients..."
+        value={searchQuery}
+        onChange={handleSearch}
+        sx={{ mb: 3 }}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon />
+            </InputAdornment>
+          ),
+        }}
+      />
+
+      <Paper elevation={3}>
+        <TableContainer>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Email</TableCell>
+                <TableCell>Phone</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Date of Birth</TableCell>
+                <TableCell>Gender</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={7} align="center">
+                    <CircularProgress />
+                  </TableCell>
+                </TableRow>
+              ) : filteredPatients.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} align="center">
+                    No patients found
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredPatients
+                  .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+                  .map((patient) => (
+                    <TableRow key={patient.id}>
+                      <TableCell>{patient.name}</TableCell>
+                      <TableCell>{patient.contact.email}</TableCell>
+                      <TableCell>{patient.contact.phone || 'N/A'}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={patient.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                          color={patient.status === 'ACTIVE' ? 'success' : 'error'}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>{new Date(patient.dateOfBirth).toLocaleDateString()}</TableCell>
+                      <TableCell>{patient.gender}</TableCell>
+                      <TableCell>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleViewPatient(patient.id)}
+                        >
+                          <ViewIcon />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleOpenDialog(patient)}
+                        >
+                          <EditIcon />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => openDeleteDialog(patient)}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        <TablePagination
+          rowsPerPageOptions={[5, 10, 25]}
+          component="div"
+          count={filteredPatients.length}
+          rowsPerPage={rowsPerPage}
+          page={page}
+          onPageChange={handleChangePage}
+          onRowsPerPageChange={handleChangeRowsPerPage}
         />
+      </Paper>
 
-        <TextField
-          select
-          label="Filter Status"
-          value={filterStatus}
-          onChange={handleFilterChange}
-          variant="outlined"
-          sx={{ width: { xs: '100%', sm: 200 } }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <FilterIcon />
-              </InputAdornment>
-            ),
-          }}
-        >
-          <MenuItem value="all">All Patients</MenuItem>
-          <MenuItem value="active">Active</MenuItem>
-          <MenuItem value="inactive">Inactive</MenuItem>
-          <MenuItem value="pending">Pending</MenuItem>
-        </TextField>
-
-        <Button variant="outlined" onClick={handleSearch}>
-          Search
-        </Button>
-      </Box>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-          <CircularProgress />
-        </Box>
-      ) : patients.length === 0 ? (
-        <Alert severity="info">
-          No patients found. Try changing your search or filter criteria.
-        </Alert>
-      ) : (
-        <>
-          <Grid container spacing={3}>
-            {patients.map((patient) => (
-              <Grid item xs={12} sm={6} md={4} key={patient.id}>
-                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <CardContent sx={{ flexGrow: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Avatar sx={{ bgcolor: 'primary.main', mr: 2 }}>
-                        {patient.firstName.charAt(0)}
-                      </Avatar>
-                      <Box>
-                        <Typography variant="h6">
-                          {patient.firstName} {patient.lastName}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          ID: {patient.id.substring(0, 8)}
-                        </Typography>
-                      </Box>
-                    </Box>
-
-                    <Box sx={{ mb: 2 }}>
-                      <Chip
-                        label={patient.status === 'ACTIVE' ? 'Active' : patient.status === 'INACTIVE' ? 'Inactive' : 'Pending'}
-                        color={patient.status === 'ACTIVE' ? 'success' : patient.status === 'INACTIVE' ? 'error' : 'warning'}
-                        size="small"
-                        sx={{ mr: 1 }}
-                      />
-                      {patient.tags?.map((tag, index) => (
-                        <Chip key={index} label={tag} size="small" sx={{ mr: 1, mt: 1 }} />
-                      ))}
-                    </Box>
-
-                    <Box sx={{ mb: 1, display: 'flex', alignItems: 'center' }}>
-                      <EmailIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
-                      <Typography variant="body2">{patient.email}</Typography>
-                    </Box>
-
-                    {patient.phone && (
-                      <Box sx={{ mb: 1, display: 'flex', alignItems: 'center' }}>
-                        <PhoneIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
-                        <Typography variant="body2">{patient.phone}</Typography>
-                      </Box>
-                    )}
-                  </CardContent>
-
-                  <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2 }}>
-                    <Button
-                      size="small"
-                      startIcon={<ViewIcon />}
-                      onClick={() => handleViewPatient(patient.id)}
-                    >
-                      View
-                    </Button>
-                    <Button
-                      size="small"
-                      startIcon={<EditIcon />}
-                      onClick={() => handleEditPatient(patient.id)}
-                    >
-                      Edit
-                    </Button>
-                  </CardActions>
-                </Card>
-              </Grid>
-            ))}
-          </Grid>
-
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-            <Pagination
-              count={totalPages}
-              page={page}
-              onChange={handlePageChange}
-              color="primary"
-            />
-          </Box>
-        </>
-      )}
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={isDeleteDialogOpen} onClose={closeDeleteDialog}>
-        <DialogTitle>Confirm Deactivation</DialogTitle>
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {selectedPatient ? 'Edit Patient' : 'Add New Patient'}
+        </DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            Are you sure you want to deactivate {selectedPatient?.firstName} {selectedPatient?.lastName}? This will remove them from your patient list.
-          </DialogContentText>
+          <Box sx={{ pt: 2 }}>
+            <TextField
+              fullWidth
+              label="First Name"
+              value={formData.firstName}
+              onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+              margin="normal"
+              required
+            />
+            <TextField
+              fullWidth
+              label="Last Name"
+              value={formData.lastName}
+              onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+              margin="normal"
+              required
+            />
+            <TextField
+              fullWidth
+              label="Email"
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              margin="normal"
+              required
+            />
+            <TextField
+              fullWidth
+              label="Phone"
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              margin="normal"
+            />
+            <TextField
+              fullWidth
+              label="Date of Birth"
+              type="date"
+              value={formData.dateOfBirth}
+              onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+              margin="normal"
+              required
+              InputLabelProps={{
+                shrink: true,
+              }}
+            />
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Gender</InputLabel>
+              <Select
+                value={formData.gender}
+                onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                label="Gender"
+                required
+              >
+                <MenuItem value="MALE">Male</MenuItem>
+                <MenuItem value="FEMALE">Female</MenuItem>
+                <MenuItem value="OTHER">Other</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={closeDeleteDialog}>Cancel</Button>
-          <Button onClick={handleDeletePatient} color="error">
-            Deactivate
+          <Button onClick={handleCloseDialog}>Cancel</Button>
+          <Button onClick={handleSubmit} variant="contained">
+            {selectedPatient ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {error && (
+        <Alert severity="error" sx={{ mt: 3 }}>
+          {error}
+        </Alert>
+      )}
     </Container>
   );
 } 

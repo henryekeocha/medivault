@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { authenticator } from 'otplib';
 import crypto from 'crypto';
 import { S3Client } from '@aws-sdk/client-s3';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 const s3Client = new S3Client({
     region: process.env.AWS_REGION,
     credentials: {
@@ -66,11 +66,65 @@ export const getSettings = catchAsync(async (req, res) => {
  * @throws {AppError} - Throws if there's an error updating settings
  */
 export const updateSettings = catchAsync(async (req, res) => {
-    const settings = await prisma.userSettings.update({
+    console.log('Update settings request body:', JSON.stringify(req.body, null, 2));
+    // Extract valid UserSettings fields and handle nested objects
+    const updateData = {};
+    // List of valid fields in UserSettings model
+    const validUserSettings = [
+        'emailNotifications', 'pushNotifications', 'messageNotifications',
+        'shareNotifications', 'theme', 'language', 'timezone', 'highContrast',
+        'fontSize', 'reduceMotion', 'profileVisibility', 'showOnlineStatus',
+        'workingHours'
+    ];
+    // Process direct field updates
+    for (const field of validUserSettings) {
+        if (req.body[field] !== undefined) {
+            updateData[field] = req.body[field];
+        }
+    }
+    // Handle nested personalInfo structure
+    if (req.body.personalInfo) {
+        // Store personalInfo in workingHours json field
+        updateData.workingHours = {
+            ...(await prisma.userSettings.findUnique({
+                where: { userId: req.user.id }
+            }))?.workingHours || {},
+            personalInfo: req.body.personalInfo
+        };
+    }
+    // Handle nested providerSettings
+    if (req.body.providerSettings) {
+        // Store providerSettings in workingHours json field
+        updateData.workingHours = {
+            ...(updateData.workingHours || {}),
+            ...(await prisma.userSettings.findUnique({
+                where: { userId: req.user.id }
+            }))?.workingHours || {},
+            providerSettings: req.body.providerSettings
+        };
+    }
+    // Handle nested adminSettings
+    if (req.body.adminSettings) {
+        // Store adminSettings in workingHours json field
+        updateData.workingHours = {
+            ...(updateData.workingHours || {}),
+            ...(await prisma.userSettings.findUnique({
+                where: { userId: req.user.id }
+            }))?.workingHours || {},
+            adminSettings: req.body.adminSettings
+        };
+    }
+    console.log('Processed update data:', JSON.stringify(updateData, null, 2));
+    // Update user settings with the processed data
+    const settings = await prisma.userSettings.upsert({
         where: {
             userId: req.user.id,
         },
-        data: req.body,
+        update: updateData,
+        create: {
+            userId: req.user.id,
+            ...updateData
+        }
     });
     res.status(200).json({
         status: 'success',
@@ -90,7 +144,7 @@ export const updatePassword = catchAsync(async (req, res) => {
             password: true,
         },
     });
-    if (!user || !(await bcrypt.compare(currentPassword, user.password))) {
+    if (!user || !user.password || !(await bcrypt.compare(currentPassword, user.password))) {
         throw new AppError('Current password is incorrect', 401);
     }
     const hashedPassword = await bcrypt.hash(newPassword, 12);
@@ -134,9 +188,27 @@ export const toggleTwoFactor = catchAsync(async (req, res) => {
                 id: req.user.id,
             },
             data: {
-                twoFactorEnabled: true,
-                twoFactorSecret: secret,
+            // Use settings instead
             },
+        });
+        // Store 2FA information in settings
+        await prisma.userSettings.upsert({
+            where: { userId: req.user.id },
+            update: {
+                // Store in metadata
+                workingHours: {
+                    ...(await prisma.userSettings.findUnique({ where: { userId: req.user.id } }))?.workingHours || {},
+                    twoFactorEnabled: true,
+                    twoFactorSecret: secret
+                }
+            },
+            create: {
+                userId: req.user.id,
+                workingHours: {
+                    twoFactorEnabled: true,
+                    twoFactorSecret: secret
+                }
+            }
         });
         res.status(200).json({
             status: 'success',
@@ -148,14 +220,23 @@ export const toggleTwoFactor = catchAsync(async (req, res) => {
     }
     else {
         // Disable 2FA
-        await prisma.user.update({
-            where: {
-                id: req.user.id,
+        await prisma.userSettings.upsert({
+            where: { userId: req.user.id },
+            update: {
+                // Store in metadata
+                workingHours: {
+                    ...(await prisma.userSettings.findUnique({ where: { userId: req.user.id } }))?.workingHours || {},
+                    twoFactorEnabled: false,
+                    twoFactorSecret: null
+                }
             },
-            data: {
-                twoFactorEnabled: false,
-                twoFactorSecret: null,
-            },
+            create: {
+                userId: req.user.id,
+                workingHours: {
+                    twoFactorEnabled: false,
+                    twoFactorSecret: null
+                }
+            }
         });
         res.status(200).json({
             status: 'success',

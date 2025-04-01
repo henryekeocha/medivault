@@ -4,7 +4,8 @@ import React from 'react';
 import { Button, Stack, Typography, Divider, Box } from '@mui/material';
 import GoogleIcon from '@mui/icons-material/Google';
 import FacebookIcon from '@mui/icons-material/Facebook';
-import { signIn } from 'next-auth/react';
+import { useClerk, useSignIn } from '@clerk/nextjs';
+import type { OAuthStrategy } from '@clerk/types';
 
 interface SocialLoginButtonsProps {
   onSuccess?: () => void;
@@ -15,17 +16,23 @@ const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
   onSuccess,
   onError,
 }) => {
-  const handleSocialLogin = async (provider: string) => {
+  const { signIn } = useSignIn();
+
+  const handleSocialLogin = async (provider: OAuthStrategy) => {
     try {
-      const result = await signIn(provider, {
-        redirect: false,
+      if (!signIn) {
+        throw new Error('Sign in not initialized');
+      }
+
+      await signIn.authenticateWithRedirect({
+        strategy: provider,
+        redirectUrl: '/auth/callback',
+        redirectUrlComplete: '/dashboard'
       });
       
-      if (result?.error) {
-        onError?.(result.error);
-      } else if (result?.ok && onSuccess) {
-        onSuccess();
-      }
+      // Note: The success callback will be handled by Clerk's redirect
+      // The onSuccess prop is kept for backward compatibility
+      onSuccess?.();
     } catch (error) {
       console.error(`${provider} login error:`, error);
       onError?.(`Error signing in with ${provider}`);
@@ -45,7 +52,7 @@ const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
           variant="outlined"
           fullWidth
           startIcon={<GoogleIcon />}
-          onClick={() => handleSocialLogin('google')}
+          onClick={() => handleSocialLogin('oauth_google')}
           sx={{
             justifyContent: 'flex-start',
             px: 3,
@@ -65,7 +72,7 @@ const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
           variant="outlined"
           fullWidth
           startIcon={<FacebookIcon />}
-          onClick={() => handleSocialLogin('facebook')}
+          onClick={() => handleSocialLogin('oauth_facebook')}
           sx={{
             justifyContent: 'flex-start',
             px: 3,

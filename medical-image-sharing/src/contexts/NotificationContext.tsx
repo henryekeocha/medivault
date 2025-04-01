@@ -11,51 +11,83 @@ import {
   Divider,
 } from '@mui/material';
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { sharedClient } from '@/lib/api';
 import { NotificationResponse } from '@/lib/api/types';
-import { useAuth } from './AuthContext';
+import { useAuth } from '@clerk/nextjs';
+import { useWebSocket } from './WebSocketContext';
+import { useToast } from './ToastContext';
 
 // Modified to match backend structure while maintaining backward compatibility
 interface Notification {
   id: string;
+  title: string;
   message: string;
-  type: 'info' | 'warning' | 'error' | 'success';
-  timestamp: Date;
+  type: 'info' | 'success' | 'warning' | 'error';
   read: boolean;
-  title?: string;
-  data?: any;
+  createdAt: Date;
+}
+
+interface ApiError {
+  response?: {
+    status: number;
+  };
+  message?: string;
 }
 
 interface NotificationContextType {
   notifications: Notification[];
-  addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => void;
+  unreadCount: number;
   markAsRead: (id: string) => void;
+  markAllAsRead: () => void;
   clearNotifications: () => void;
   deleteNotification: (id: string) => void;
   fetchNotifications: () => Promise<void>;
   NotificationBell: React.FC;
 }
 
-const NotificationContext = createContext<NotificationContextType>({
-  notifications: [],
-  addNotification: () => {},
-  markAsRead: () => {},
-  clearNotifications: () => {},
-  deleteNotification: () => {},
-  fetchNotifications: async () => {},
-  NotificationBell: () => null,
-});
+const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
-export const useNotifications = () => useContext(NotificationContext);
-
-export function NotificationProvider({ children }: { children: React.ReactNode }) {
+export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isSignedIn } = useAuth();
+  const { onNotificationEvent } = useWebSocket();
+  const { showError } = useToast();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const auth = useAuth();
-  const apiClient = ApiClient.getInstance();
-  
-  // Safely access isAuthenticated property
-  const isAuthenticated = auth?.isAuthenticated || false;
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      setNotifications([]);
+      return;
+    }
+
+    // Fetch notifications when user is signed in
+    const fetchNotifications = async () => {
+      try {
+        const response = await sharedClient.getNotifications();
+        if (response.status === 'success') {
+          setNotifications(response.data.map(mapNotification));
+        }
+      } catch (error) {
+        console.error('Error fetching notifications:', error);
+        const apiError = error as ApiError;
+        // Don't show error toast for 401 as it's expected when not authenticated
+        if (apiError.response?.status !== 401) {
+          showError('Failed to fetch notifications');
+        }
+      }
+    };
+
+    fetchNotifications();
+
+    // Subscribe to real-time notifications
+    const unsubscribe = onNotificationEvent((notification) => {
+      setNotifications(prev => [mapNotification(notification), ...prev]);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isSignedIn, onNotificationEvent, showError]);
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -68,12 +100,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   // Map server notification to client notification format
   const mapNotification = (notification: NotificationResponse): Notification => ({
     id: notification.id,
-    message: notification.message,
-    title: notification.title,
+    title: notification.title || 'Notification',
+    message: notification.message || 'No message',
     type: mapNotificationType(notification.type),
-    timestamp: new Date(notification.createdAt),
     read: notification.read,
-    data: notification.data
+    createdAt: new Date(notification.createdAt),
   });
 
   // Map server notification type to client notification type
@@ -86,207 +117,123 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   const fetchNotifications = useCallback(async () => {
     try {
-      if (!isAuthenticated) {
-        return;
-      }
-
-      const response = await apiClient.getNotifications();
-      
-      // Check if we have valid data before processing
-      if (response && response.status === 'success' && Array.isArray(response.data)) {
-        const mappedNotifications = response.data.map(mapNotification);
-        setNotifications(mappedNotifications);
-      } else if (response.status === 'error') {
-        // If there's an error, log it only once (not on every retry)
-        console.warn('Notifications API error:', response.error?.message || 'Unknown error');
-      }
+      const response = await fetch('/api/notifications');
+      if (!response.ok) throw new Error('Failed to fetch notifications');
+      const data = await response.json();
+      setNotifications(data);
     } catch (error) {
-      // Log the error, but don't spam the console on every retry
-      if (error instanceof Error && error.message !== 'Failed to fetch notifications') {
-        console.error('Failed to fetch notifications:', error);
-      }
+      console.error('Error fetching notifications:', error);
     }
-  }, [isAuthenticated]);
-
-  // Fetch notifications when the component mounts and when auth state changes
-  useEffect(() => {
-    let ignorePolling = false;
-    let failedAttempts = 0;
-    const MAX_FAILED_ATTEMPTS = 3;
-    const MAX_ERROR_LOG_COUNT = 2; // Only log errors twice to avoid spam
-    let errorLogCount = 0;
-    
-    const fetchAndHandleErrors = async () => {
-      try {
-        await fetchNotifications();
-        // Reset failed attempts counter on success
-        failedAttempts = 0;
-        errorLogCount = 0; // Reset error log count on success
-      } catch (error) {
-        failedAttempts++;
-        // Only log a limited number of errors to avoid spamming the console
-        if (errorLogCount < MAX_ERROR_LOG_COUNT) {
-          console.warn(`Notification fetch error (attempt ${failedAttempts}):`, error);
-          errorLogCount++;
-          if (errorLogCount === MAX_ERROR_LOG_COUNT) {
-            console.warn('Suppressing further notification fetch error logs');
-          }
-        }
-        
-        if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
-          console.warn('Notification polling temporarily paused after multiple failures');
-          // We'll retry after a longer delay with the next interval
-        }
-      }
-    };
-    
-    // Initial fetch
-    fetchAndHandleErrors();
-
-    // Set up polling with exponential backoff for failures
-    const interval = setInterval(() => {
-      if (isAuthenticated && !ignorePolling) {
-        fetchAndHandleErrors();
-      }
-    }, failedAttempts >= MAX_FAILED_ATTEMPTS ? 120000 : 30000); // 2 min backoff vs 30 sec normal
-
-    return () => {
-      ignorePolling = true;
-      clearInterval(interval);
-    };
-  }, [fetchNotifications, isAuthenticated]);
-
-  const addNotification = (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
-    const newNotification: Notification = {
-      ...notification,
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date(),
-      read: false,
-    };
-    setNotifications((prev) => [newNotification, ...prev]);
-  };
+  }, []);
 
   const markAsRead = async (id: string) => {
+    if (!isSignedIn) return;
+    
     try {
-      await apiClient.markNotificationAsRead(id);
-      setNotifications((prev) =>
-        prev.map((notification) =>
-          notification.id === id ? { ...notification, read: true } : notification
+      await sharedClient.markNotificationAsRead(id);
+      setNotifications(prev =>
+        prev.map(notification =>
+          notification.id === id
+            ? { ...notification, read: true }
+            : notification
         )
       );
     } catch (error) {
-      console.error('Failed to mark notification as read:', error);
+      console.error('Error marking notification as read:', error);
+      const apiError = error as ApiError;
+      if (apiError.response?.status !== 401) {
+        showError('Failed to mark notification as read');
+      }
+    }
+  };
+
+  const markAllAsRead = async () => {
+    if (!isSignedIn) return;
+    
+    try {
+      await sharedClient.markAllNotificationsAsRead();
+      setNotifications(prev =>
+        prev.map(notification => ({ ...notification, read: true }))
+      );
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+      const apiError = error as ApiError;
+      if (apiError.response?.status !== 401) {
+        showError('Failed to mark all notifications as read');
+      }
+    }
+  };
+
+  const clearNotifications = async () => {
+    if (!isSignedIn) return;
+    
+    try {
+      setNotifications([]);
+    } catch (error) {
+      console.error('Error clearing notifications:', error);
+      const apiError = error as ApiError;
+      if (apiError.response?.status !== 401) {
+        showError('Failed to clear notifications');
+      }
     }
   };
 
   const deleteNotification = async (id: string) => {
+    if (!isSignedIn) return;
+    
     try {
-      await apiClient.deleteNotification(id);
-      setNotifications((prev) => prev.filter((notification) => notification.id !== id));
+      await sharedClient.deleteNotification(id);
+      setNotifications(prev => prev.filter(notification => notification.id !== id));
     } catch (error) {
       console.error('Failed to delete notification:', error);
+      const apiError = error as ApiError;
+      if (apiError.response?.status !== 401) {
+        showError('Failed to delete notification');
+      }
     }
   };
 
-  const clearNotifications = () => {
-    setNotifications([]);
-  };
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   const NotificationBell: React.FC = () => {
-    const unreadCount = notifications.filter((n) => !n.read).length;
-
     return (
-      <Box 
-        sx={{ 
-          position: 'relative', 
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}
-      >
-        <IconButton 
-          color="inherit" 
+      <Box>
+        <IconButton
+          color="inherit"
           onClick={handleClick}
-          aria-label="Show notifications"
-          aria-controls={Boolean(anchorEl) ? 'notification-menu' : undefined}
-          aria-haspopup="true"
-          aria-expanded={Boolean(anchorEl)}
-          sx={{ 
-            width: { xs: '36px', sm: '44px' }, 
-            height: { xs: '36px', sm: '44px' },
-            position: 'relative'
-          }}
+          aria-label="show notifications"
         >
-          <Badge 
-            badgeContent={unreadCount} 
-            color="error"
-            sx={{
-              '& .MuiBadge-badge': {
-                right: -3,
-                top: 3,
-              }
-            }}
-          >
+          <Badge badgeContent={unreadCount} color="error">
             <NotificationsIcon />
           </Badge>
         </IconButton>
         <Menu
-          id="notification-menu"
           anchorEl={anchorEl}
           open={Boolean(anchorEl)}
           onClose={handleClose}
-          onClick={handleClose}
           PaperProps={{
-            elevation: 8,
             sx: {
-              width: { xs: 280, sm: 360 },
               maxHeight: 400,
-              mt: 1.5,
-              overflow: 'visible',
-              filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.32))',
-              '&:before': {
-                content: '""',
-                display: 'block',
-                position: 'absolute',
-                top: 0,
-                right: 14,
-                width: 10,
-                height: 10,
-                bgcolor: 'background.paper',
-                transform: 'translateY(-50%) rotate(45deg)',
-                zIndex: 0,
-              },
+              width: 360,
             },
-          }}
-          anchorOrigin={{
-            vertical: 'bottom',
-            horizontal: 'right',
-          }}
-          transformOrigin={{
-            vertical: 'top',
-            horizontal: 'right',
-          }}
-          keepMounted
-          sx={{
-            '& .MuiMenu-paper': {
-              width: { xs: 280, sm: 360 },
-            },
-            zIndex: (theme) => theme.zIndex.modal + 1
-          }}
-          slotProps={{
-            paper: {
-              sx: {
-                overflow: 'visible'
-              }
-            }
           }}
         >
-          <Box sx={{ p: 2 }}>
+          <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Typography variant="h6">Notifications</Typography>
+            {unreadCount > 0 && (
+              <Typography
+                variant="body2"
+                color="primary"
+                sx={{ cursor: 'pointer' }}
+                onClick={markAllAsRead}
+              >
+                Mark all as read
+              </Typography>
+            )}
           </Box>
           <Divider />
           {notifications.length === 0 ? (
-            <MenuItem>
+            <MenuItem disabled>
               <Typography variant="body2" color="text.secondary">
                 No notifications
               </Typography>
@@ -295,59 +242,70 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             notifications.map((notification) => (
               <MenuItem
                 key={notification.id}
-                onClick={() => markAsRead(notification.id)}
+                onClick={() => {
+                  if (!notification.read) {
+                    markAsRead(notification.id);
+                  }
+                  handleClose();
+                }}
                 sx={{
-                  backgroundColor: notification.read ? 'transparent' : 'action.hover',
-                  display: 'block',
-                  padding: 2,
-                  position: 'relative',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  py: 2,
+                  px: 2,
+                  backgroundColor: notification.read ? 'inherit' : 'action.hover',
                 }}
               >
-                <Box>
-                  <Typography variant="subtitle2" fontWeight={notification.read ? 'normal' : 'bold'}>
-                    {notification.title || 'Notification'}
-                  </Typography>
-                  <Typography variant="body2">{notification.message}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {new Date(notification.timestamp).toLocaleString()}
-                  </Typography>
-                  <IconButton 
-                    size="small" 
-                    sx={{ 
-                      position: 'absolute', 
-                      top: 8, 
-                      right: 8,
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteNotification(notification.id);
-                    }}
-                    aria-label="Delete notification"
-                  >
-                    <Box sx={{ fontSize: '1rem' }}>×</Box>
-                  </IconButton>
-                </Box>
+                <Typography variant="subtitle2" color="text.primary">
+                  {notification.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {notification.message}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  {new Date(notification.createdAt).toLocaleString()}
+                </Typography>
               </MenuItem>
             ))
+          )}
+          {notifications.length > 0 && (
+            <>
+              <Divider />
+              <MenuItem onClick={clearNotifications}>
+                <Typography variant="body2" color="error">
+                  Clear all notifications
+                </Typography>
+              </MenuItem>
+            </>
           )}
         </Menu>
       </Box>
     );
   };
 
+  const value = {
+    notifications,
+    unreadCount,
+    markAsRead,
+    markAllAsRead,
+    clearNotifications,
+    deleteNotification,
+    fetchNotifications,
+    NotificationBell,
+  };
+
   return (
-    <NotificationContext.Provider
-      value={{
-        notifications,
-        addNotification,
-        markAsRead,
-        clearNotifications,
-        deleteNotification,
-        fetchNotifications,
-        NotificationBell,
-      }}
-    >
+    <NotificationContext.Provider value={value}>
       {children}
     </NotificationContext.Provider>
   );
-} 
+};
+
+export const useNotifications = () => {
+  const context = useContext(NotificationContext);
+  if (context === undefined) {
+    throw new Error('useNotifications must be used within a NotificationProvider');
+  }
+  return context;
+}; 

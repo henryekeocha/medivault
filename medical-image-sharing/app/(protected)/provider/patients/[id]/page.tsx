@@ -50,10 +50,10 @@ import {
   Edit
 } from '@mui/icons-material';
 import { useRouter, useParams } from 'next/navigation';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { format } from 'date-fns';
 import { PatientStatus } from '@prisma/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import PatientNotesEditor from '@/components/patients/PatientNotesEditor';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
@@ -76,6 +76,41 @@ interface PatientContact {
   };
 }
 
+interface ApiMedicalRecord {
+  id: string;
+  createdAt: string | Date;
+  title?: string;
+  recordType?: string;
+  providerId: string;
+  provider?: {
+    id: string;
+    name: string;
+  };
+  summary?: string;
+}
+
+interface ApiAppointment {
+  id: string;
+  scheduledFor: string | Date;
+  status: string;
+  appointmentType?: string;
+  providerId: string;
+  provider?: {
+    id: string;
+    name: string;
+  };
+  notes?: string;
+}
+
+interface ApiImage {
+  id: string;
+  createdAt: string | Date;
+  filename?: string;
+  imageType?: string;
+  imageUrl?: string;
+  status: string;
+}
+
 interface MedicalRecord {
   id: string;
   date: string;
@@ -83,18 +118,18 @@ interface MedicalRecord {
   type: string;
   providerId: string;
   providerName: string;
-  summary?: string;
+  summary: string;
 }
 
 interface Appointment {
   id: string;
   date: string;
   time: string;
-  status: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED';
+  status: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
   type: string;
   providerId: string;
   providerName: string;
-  notes?: string;
+  notes: string;
 }
 
 interface MedicalImage {
@@ -102,8 +137,8 @@ interface MedicalImage {
   uploadDate: string;
   title: string;
   type: string;
-  thumbnailUrl?: string;
-  status: 'PENDING' | 'REVIEWED';
+  url: string;
+  status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
 }
 
 interface Message {
@@ -137,7 +172,7 @@ export default function PatientDetailPage() {
   const router = useRouter();
   const params = useParams();
   const patientId = params?.id as string;
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -156,18 +191,17 @@ export default function PatientDetailPage() {
   });
 
   useEffect(() => {
-    if (!patientId || !user?.id) return;
+    if (!isLoaded || !user) return;
+    
     fetchPatientDetails();
-  }, [patientId, user?.id]);
+  }, [isLoaded, user]);
 
   const fetchPatientDetails = async () => {
     await withErrorHandling(async () => {
       setLoading(true);
       
-      const apiClient = ApiClient.getInstance();
-      
       // Get basic patient details
-      const patientResponse = await apiClient.getPatientDetails(patientId);
+      const patientResponse = await providerClient.getPatientDetails(patientId);
       if (patientResponse.status !== 'success' || !patientResponse.data) {
         throw new Error('Failed to fetch patient details');
       }
@@ -175,45 +209,72 @@ export default function PatientDetailPage() {
       const patientData = patientResponse.data;
       
       // Get medical records
-      let medicalRecords = [];
+      let medicalRecords: MedicalRecord[] = [];
       try {
-        const recordsResponse = await apiClient.getPatientMedicalRecords(patientId);
+        const recordsResponse = await providerClient.getPatientMedicalRecords(patientId);
         if (recordsResponse.status === 'success' && recordsResponse.data) {
-          medicalRecords = recordsResponse.data;
+          medicalRecords = recordsResponse.data.data.map((record: ApiMedicalRecord) => ({
+            id: record.id,
+            date: new Date(record.createdAt).toISOString(),
+            title: record.title || 'Untitled Record',
+            type: record.recordType || 'General',
+            providerId: record.providerId,
+            providerName: record.provider?.name || 'Unknown Provider',
+            summary: record.summary || ''
+          }));
         }
       } catch (err) {
         console.error('Error fetching medical records:', err);
-        // Continue with other data fetching even if this fails
       }
       
       // Get appointments
-      let appointments = [];
+      let appointments: Appointment[] = [];
       try {
-        const appointmentsResponse = await apiClient.getPatientAppointmentsForProvider(patientId);
+        const appointmentsResponse = await providerClient.getPatientAppointments(patientId);
         if (appointmentsResponse.status === 'success' && appointmentsResponse.data) {
-          appointments = appointmentsResponse.data;
+          appointments = appointmentsResponse.data.data.map((apt: ApiAppointment) => {
+            const scheduledDate = new Date(apt.scheduledFor);
+            return {
+              id: apt.id,
+              date: scheduledDate.toISOString().split('T')[0],
+              time: scheduledDate.toISOString().split('T')[1].substring(0, 5),
+              status: apt.status as 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW',
+              type: apt.appointmentType || 'General',
+              providerId: apt.providerId,
+              providerName: apt.provider?.name || 'Unknown Provider',
+              notes: apt.notes || ''
+            };
+          });
         }
       } catch (err) {
         console.error('Error fetching appointments:', err);
       }
       
       // Get images
-      let images = [];
+      let images: MedicalImage[] = [];
       try {
-        const imagesResponse = await apiClient.getPatientImagesForProvider(patientId);
+        const imagesResponse = await providerClient.getImages({ filter: `patientId:${patientId}` });
         if (imagesResponse.status === 'success' && imagesResponse.data) {
-          images = imagesResponse.data;
+          images = imagesResponse.data.data.map((img: ApiImage) => ({
+            id: img.id,
+            uploadDate: new Date(img.createdAt).toISOString(),
+            title: img.filename || 'Untitled Image',
+            type: img.imageType || 'General',
+            url: img.imageUrl || '',
+            status: img.status as 'PROCESSING' | 'COMPLETED' | 'FAILED'
+          }));
         }
       } catch (err) {
         console.error('Error fetching images:', err);
       }
       
       // Get messages
-      let messages = [];
+      let messages: Message[] = [];
       try {
-        const messagesResponse = await apiClient.getPatientMessagesForProvider(patientId);
+        const messagesResponse = await providerClient.getUnreadMessageCounts();
         if (messagesResponse.status === 'success' && messagesResponse.data) {
-          messages = messagesResponse.data;
+          // Note: We need to implement a proper getPatientMessages method in providerClient
+          messages = []; // Temporary empty array until we implement proper message fetching
         }
       } catch (err) {
         console.error('Error fetching messages:', err);
@@ -307,8 +368,7 @@ export default function PatientDetailPage() {
 
   const handleNotesUpdate = async (notes: string) => {
     await withErrorHandling(async () => {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.addPatientNotes(patientId, notes);
+      const response = await providerClient.addPatientNotes(patientId, notes);
       
       if (response.status === 'success') {
         // Successfully updated notes
@@ -467,7 +527,7 @@ export default function PatientDetailPage() {
           <Tab 
             label="Images" 
             icon={
-              <Badge badgeContent={patient.images?.filter(img => img.status === 'PENDING').length || 0} color="error">
+              <Badge badgeContent={patient.images?.filter(img => img.status === 'PROCESSING').length || 0} color="warning">
                 <ImageIcon />
               </Badge>
             } 
@@ -748,9 +808,9 @@ export default function PatientDetailPage() {
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">
                   Medical Images
-                  {patient.images && patient.images.filter(img => img.status === 'PENDING').length > 0 && (
+                  {patient.images && patient.images.filter(img => img.status === 'PROCESSING').length > 0 && (
                     <Chip 
-                      label={`${patient.images.filter(img => img.status === 'PENDING').length} pending review`}
+                      label={`${patient.images.filter(img => img.status === 'PROCESSING').length} processing`}
                       color="warning"
                       size="small"
                       sx={{ ml: 2 }}
@@ -780,10 +840,10 @@ export default function PatientDetailPage() {
                             justifyContent: 'center'
                           }}
                         >
-                          {image.thumbnailUrl ? (
+                          {image.url ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img 
-                              src={image.thumbnailUrl} 
+                              src={image.url} 
                               alt={image.title}
                               style={{ 
                                 maxWidth: '100%', 
@@ -802,7 +862,10 @@ export default function PatientDetailPage() {
                             </Typography>
                             <Chip
                               label={image.status}
-                              color={image.status === 'REVIEWED' ? 'success' : 'warning'}
+                              color={
+                                image.status === 'COMPLETED' ? 'success' : 
+                                image.status === 'PROCESSING' ? 'warning' : 'error'
+                              }
                               size="small"
                             />
                           </Box>

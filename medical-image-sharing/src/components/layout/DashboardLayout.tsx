@@ -10,6 +10,7 @@ import {
   ListItemButton,
   useTheme,
   styled,
+  CircularProgress,
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -25,11 +26,11 @@ import {
   Message as MessageIcon,
 } from '@mui/icons-material';
 import { useRouter, usePathname } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
 import { routes, RoutePath, UserRole, isRouteForRole, DEFAULT_ROUTES, getRoutesByRole } from '@/config/routes';
-import { Route } from 'next';
-import { useSession } from 'next-auth/react';
+import type { Route } from 'next';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { Role } from '@prisma/client';
+import { getCurrentUserRole } from '@/lib/clerk/actions';
 
 const DRAWER_WIDTH = 240;
 const COLLAPSED_DRAWER_WIDTH = 65;
@@ -52,116 +53,75 @@ interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
-// Add utility function to safely match role strings
-function getRoleEnum(roleString: string | Role): Role {
-  // If it's already a Role enum value, return it
-  if (typeof roleString !== 'string') {
-    return roleString;
-  }
-  
-  // Convert string representation to Role enum
-  switch(roleString) {
-    case 'Admin':
-    case 'ADMIN':
-      return Role.ADMIN;
-    case 'Provider':
-    case 'PROVIDER':
-      return Role.PROVIDER;
-    case 'Patient':
-    case 'PATIENT':
-      return Role.PATIENT;
-    default:
-      console.error(`Unknown role: ${roleString}`);
-      // Default to PATIENT as fallback
-      return Role.PATIENT;
-  }
-}
-
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(true);
   const theme = useTheme();
   const router = useRouter();
   const pathname = usePathname();
-  const { user, isAuthenticated, checkAuth } = useAuth();
-  const { data: session, status: sessionStatus } = useSession();
-  const [isLocallyAuthenticated, setIsLocallyAuthenticated] = useState(false);
-  const [isCheckingAuth, setIsCheckingAuth] = useState(false);
+  const { user, isLoaded: isClerkLoaded } = useUser();
+  const { isSignedIn: isClerkSignedIn } = useAuth();
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const authCheckTimeoutRef = React.useRef<NodeJS.Timeout>();
+  const [userRole, setUserRole] = useState<Role | null>(null);
 
-  // Enhanced authentication check
+  // Load user role
   useEffect(() => {
-    const checkAuthentication = async () => {
-      // Clear any existing timeout
-      if (authCheckTimeoutRef.current) {
-        clearTimeout(authCheckTimeoutRef.current);
-      }
-
-      // Set a timeout to prevent infinite checking
-      authCheckTimeoutRef.current = setTimeout(() => {
-        setIsCheckingAuth(false);
-        setIsInitialLoad(false);
-      }, 5000);
-
-      try {
-        // First check NextAuth session
-        if (sessionStatus === 'authenticated' && session?.user) {
-          setIsLocallyAuthenticated(true);
+    const loadUserRole = async () => {
+      if (isClerkLoaded && isClerkSignedIn && user) {
+        try {
+          console.log('Loading user role from Clerk metadata first');
           
-          // If custom auth context says we're not authenticated but NextAuth says we are,
-          // update the custom auth context
-          if (!isAuthenticated && session.user) {
-            console.log('Found NextAuth session but custom auth is not updated, syncing state...');
-            setIsCheckingAuth(true);
-            await checkAuth();
-          }
-        } else {
-          // Fallback to localStorage token check
-          const token = localStorage.getItem('token');
-          const hasToken = !!token;
+          // First try to get role directly from Clerk metadata
+          const roleFromMetadata = user.publicMetadata?.role || user.unsafeMetadata?.role;
           
-          if (hasToken) {
-            setIsLocallyAuthenticated(true);
-            
-            if (!isAuthenticated) {
-              setIsCheckingAuth(true);
-              await checkAuth();
-            }
+          if (roleFromMetadata) {
+            console.log('Using role from Clerk metadata:', roleFromMetadata);
+            setUserRole(roleFromMetadata as Role);
           } else {
-            setIsLocallyAuthenticated(false);
+            // If no role in Clerk metadata, try the server-side function
+            console.log('No role in Clerk metadata, checking database');
+            const role = await getCurrentUserRole();
+            
+            if (role) {
+              console.log('User role found in database:', role);
+              setUserRole(role);
+            } else {
+              console.error('No role found in Clerk metadata or database');
+              // Do not default to PATIENT role, redirect to login instead
+              setUserRole(null);
+              router.replace('/auth/login?error=no_role_found');
+            }
+          }
+        } catch (error) {
+          console.error('Error loading user role:', error);
+          
+          // Try to use Clerk metadata as fallback
+          const roleFromMetadata = user.publicMetadata?.role || user.unsafeMetadata?.role;
+          if (roleFromMetadata) {
+            console.log('Using role from Clerk metadata as fallback:', roleFromMetadata);
+            setUserRole(roleFromMetadata as Role);
+          } else {
+            // Do not default to PATIENT role in case of error
+            setUserRole(null);
+            router.replace('/auth/login?error=role_error');
           }
         }
-      } catch (error) {
-        console.error('Authentication check failed:', error);
-      } finally {
-        setIsCheckingAuth(false);
-        setIsInitialLoad(false);
-        if (authCheckTimeoutRef.current) {
-          clearTimeout(authCheckTimeoutRef.current);
-        }
       }
     };
-
-    checkAuthentication();
-
-    // Cleanup
-    return () => {
-      if (authCheckTimeoutRef.current) {
-        clearTimeout(authCheckTimeoutRef.current);
-      }
-    };
-  }, [isAuthenticated, checkAuth, session, sessionStatus]);
+    
+    loadUserRole();
+  }, [isClerkLoaded, isClerkSignedIn, user, router]);
 
   // Handle routing based on auth state
   useEffect(() => {
-    // Skip if still loading or checking
-    if (isInitialLoad || isCheckingAuth) {
+    // Skip if still loading
+    if (!isClerkLoaded) {
       return;
     }
 
-    const isUserAuthenticated = sessionStatus === 'authenticated' || isAuthenticated || isLocallyAuthenticated;
-    
-    if (!isUserAuthenticated) {
+    setIsInitialLoad(false);
+
+    // Check if user is authenticated
+    if (!isClerkSignedIn) {
       console.log('User not authenticated, redirecting to login');
       const cleanPath = pathname ? pathname.replace('/(protected)', '') : '/';
       const redirectUrl = `/auth/login${cleanPath !== '/' ? `?redirect=${cleanPath}` : ''}` as Route;
@@ -170,33 +130,34 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     }
 
     // Handle role-specific routing
-    const userRole = (session?.user?.role || user?.role) as keyof typeof DEFAULT_ROUTES;
     if (userRole) {
-      if (pathname === '/') {
-        const defaultRoute = DEFAULT_ROUTES[userRole] || '/dashboard';
-        router.replace(defaultRoute as Route);
-        return;
-      }
-
-      // Check for unauthorized role access
-      const roleValue = String(userRole).toUpperCase();
-      const isAdminPath = pathname?.startsWith('/admin');
-      const isProviderPath = pathname?.startsWith('/provider');
-      const isPatientPath = pathname?.startsWith('/patient');
+      const currentPath = pathname || '/';
+      const isAllowedRoute = isRouteForRole(currentPath as RoutePath, userRole);
       
-      if (
-        (isAdminPath && roleValue !== 'ADMIN') ||
-        (isProviderPath && roleValue !== 'PROVIDER') ||
-        (isPatientPath && roleValue !== 'PATIENT')
-      ) {
-        const correctPath = DEFAULT_ROUTES[userRole] || '/dashboard';
-        router.replace(correctPath as Route);
+      if (!isAllowedRoute) {
+        console.log('User not authorized for this route, redirecting to default route');
+        const defaultRoute = DEFAULT_ROUTES[userRole];
+        router.replace(defaultRoute);
       }
     }
-  }, [pathname, isAuthenticated, isLocallyAuthenticated, user, router, isCheckingAuth, session, sessionStatus, isInitialLoad]);
+  }, [isClerkLoaded, isClerkSignedIn, userRole, pathname, router]);
+
+  // Show loading state
+  if (isInitialLoad) {
+    return (
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        minHeight: '100vh' 
+      }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   const isHomePage = pathname === '/';
-  const shouldShowSidebar = (isAuthenticated || isLocallyAuthenticated || sessionStatus === 'authenticated') && !isHomePage;
+  const shouldShowSidebar = isClerkSignedIn && !isHomePage;
 
   const handleNavigation = (path: RoutePath) => {
     try {
@@ -222,26 +183,15 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   const getNavigationItems = (): NavigationItem[] => {
-    if (!user?.role) return [];
+    if (!userRole) return [];
 
-    // Convert Role to a consistent string format
-    const roleValue = typeof user.role === 'string' 
-      ? (user.role.toUpperCase() === 'ADMIN' 
-        ? 'ADMIN' 
-        : user.role.toUpperCase() === 'PROVIDER' 
-          ? 'PROVIDER' 
-          : 'PATIENT')
-      : String(user.role);
-    
-    console.log('Getting navigation items for role:', roleValue);
-    
     const baseItems: NavigationItem[] = [
       {
         text: 'Dashboard',
         icon: <DashboardIcon />,
-        path: roleValue === 'ADMIN' 
+        path: userRole === Role.ADMIN 
           ? routes.admin.dashboard 
-          : roleValue === 'PROVIDER'
+          : userRole === Role.PROVIDER
             ? routes.provider.dashboard
             : routes.patient.dashboard,
       },
@@ -249,9 +199,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
     let roleSpecificItems: NavigationItem[] = [];
 
-    // Use the string value for switch case matching
-    switch (roleValue) {
-      case 'ADMIN':
+    switch (userRole) {
+      case Role.ADMIN:
         roleSpecificItems = [
           {
             text: 'Users',
@@ -291,17 +240,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           {
             text: 'Reports',
             icon: <AnalyticsIcon />,
-            path: routes.dashboard.reports,
+            path: routes.admin.reports,
           },
           {
             text: 'Patients',
             icon: <PersonIcon />,
-            path: routes.patients.list,
+            path: routes.admin.patients,
           },
           {
             text: 'Providers',
             icon: <PersonIcon />,
-            path: routes.providers.list,
+            path: routes.admin.providers,
           },
           {
             text: 'Appointments',
@@ -320,8 +269,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           },
         ];
         break;
-        
-      case 'PROVIDER':
+      case Role.PROVIDER:
         roleSpecificItems = [
           {
             text: 'Patients',
@@ -375,9 +323,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           },
         ];
         break;
-        
-      case 'PATIENT':
-      default:
+      case Role.PATIENT:
         roleSpecificItems = [
           {
             text: 'My Images',
@@ -433,8 +379,6 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         break;
     }
 
-    // Log the items for debugging
-    console.log('Navigation items:', [...baseItems, ...roleSpecificItems]);
     return [...baseItems, ...roleSpecificItems];
   };
 

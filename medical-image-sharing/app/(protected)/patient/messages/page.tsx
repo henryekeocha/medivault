@@ -27,38 +27,23 @@ import {
 } from '@mui/icons-material';
 import { ChatList } from '@/components/messages/ChatList';
 import { ChatWindow } from '@/components/messages/ChatWindow';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import { withProtectedRoute } from '@/components/ProtectedRoute';
-import { apiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
+import { sharedClient } from '@/lib/api/sharedClient';
 import { useToast } from '@/contexts/ToastContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
-import { LoadingState } from '@/components/LoadingState'; 
+import { LoadingState } from '@/components/LoadingState';
+import { User } from '@/lib/api/types';
 
-// Define the Provider interface
-interface Provider {
-  id: string;
-  name: string;
-}
-
-// Define our own ErrorState interface to match what useErrorHandler returns
-interface ErrorState {
-  hasError: boolean;
-  errorMessage: string;
-  errorContext: string;
-}
-
-// Extend ApiClient with new methods
-declare module '@/lib/api/client' {
-  interface ApiClient {
-    get<T>(url: string, config?: any): Promise<T>;
-    sendMessage(recipientId: string, content: string): Promise<{ status: string }>;
-  }
+interface Provider extends User {
+  specialty?: string;
+  hospital?: string;
 }
 
 function PatientMessagesPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const { showSuccess } = useToast();
-  // Create a wrapper around useErrorHandler to handle the error state properly
   const { 
     error,
     handleError: handleErrorFn, 
@@ -66,19 +51,12 @@ function PatientMessagesPage() {
     clearError 
   } = useErrorHandler({
     context: 'Patient Messages',
-    showToastByDefault: true // Use the correct property name
+    showToastByDefault: true
   });
-
-  // Create a proper error state object to use in the UI
-  const errorState: ErrorState = {
-    hasError: !!error,
-    errorMessage: error || '',
-    errorContext: error ? 'Patient Messages' : ''
-  };
 
   const isMobile = useMediaQuery((theme: Theme) => theme.breakpoints.down('md'));
   
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | undefined>(undefined);
   const [selectedUserName, setSelectedUserName] = useState<string>('');
   const [showChatList, setShowChatList] = useState(true);
   const [showComposeDialog, setShowComposeDialog] = useState(false);
@@ -104,9 +82,8 @@ function PatientMessagesPage() {
   const fetchProvidersAndOpenDialog = async () => {
     setLoadingProviders(true);
     try {
-      // Fetch providers (in a real app, this would be an API call)
-      const response = await apiClient.get<{ data: Provider[] }>('/users?role=PROVIDER');
-      if (!response || !response.data) {
+      const response = await patientClient.getProviders();
+      if (response.status !== 'success' || !response.data) {
         throw new Error('Failed to load providers');
       }
       setProviders(response.data);
@@ -119,18 +96,15 @@ function PatientMessagesPage() {
   // Create a wrapped function that handles errors
   const fetchProvidersWithErrorHandling = async () => {
     try {
-      // Use withErrorHandling and await the Promise it returns
       await withErrorHandling(
         fetchProvidersAndOpenDialog, 
-        { showToast: true } // Use the correct option format
+        { showToast: true }
       );
     } catch (error) {
       console.error('Error fetching providers:', error);
-      // Error is already handled by withErrorHandling, we just need to catch it here
     }
   };
 
-  // Create a proper event handler that calls the async function
   const handleOpenComposeDialog = (e: React.MouseEvent) => {
     e.preventDefault();
     fetchProvidersWithErrorHandling();
@@ -149,7 +123,7 @@ function PatientMessagesPage() {
 
     setSendingMessage(true);
     try {
-      const response = await apiClient.sendMessage(selectedProvider.id, newMessageText);
+      const response = await sharedClient.sendMessage(selectedProvider.id, newMessageText);
       if (response.status === 'success') {
         showSuccess('Message sent successfully');
         handleCloseComposeDialog();
@@ -166,22 +140,27 @@ function PatientMessagesPage() {
   // Create a wrapped function that handles errors
   const sendMessageWithErrorHandling = async () => {
     try {
-      // Use withErrorHandling and await the Promise it returns
       await withErrorHandling(
         sendNewMessage, 
-        { showToast: true } // Use the correct option format
+        { showToast: true }
       );
     } catch (error) {
       console.error('Error sending message:', error);
-      // Error is already handled by withErrorHandling, we just need to catch it here
     }
   };
 
-  // Create a proper event handler that calls the async function
   const handleSendNewMessage = (e: React.MouseEvent) => {
     e.preventDefault();
     sendMessageWithErrorHandling();
   };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <Container maxWidth="xl" sx={{ height: 'calc(100vh - 80px)', py: 2 }}>
@@ -198,7 +177,7 @@ function PatientMessagesPage() {
       </Box>
 
       {/* Error display at page level if needed */}
-      {errorState.hasError && errorState.errorContext !== 'Failed to load providers' && errorState.errorContext !== 'Failed to send message' && (
+      {error && error !== 'Failed to load providers' && error !== 'Failed to send message' && (
         <Alert 
           severity="error" 
           action={
@@ -212,7 +191,7 @@ function PatientMessagesPage() {
           }
           sx={{ mb: 2 }}
         >
-          {errorState.errorMessage}
+          {error}
         </Alert>
       )}
 
@@ -221,41 +200,41 @@ function PatientMessagesPage() {
         showChatList ? (
           <Paper sx={{ height: 'calc(100% - 48px)' }}>
             <ChatList
-              onChatSelect={handleChatSelect}
-              selectedUserId={selectedUserId || undefined}
+              onSelectChat={handleChatSelect}
+              selectedChatId={selectedUserId}
+              type="patient"
             />
           </Paper>
         ) : (
-          <Box sx={{ height: 'calc(100% - 48px)', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ height: '100%' }}>
             <Button
               startIcon={<BackIcon />}
               onClick={handleBackToList}
-              sx={{ alignSelf: 'flex-start', mb: 1 }}
+              sx={{ mb: 2 }}
             >
-              Back to conversations
+              Back to Messages
             </Button>
-            <Paper sx={{ flex: 1 }}>
-              {selectedUserId && (
-                <ChatWindow
-                  recipientId={selectedUserId}
-                  recipientName={selectedUserName}
-                />
-              )}
+            <Paper sx={{ height: 'calc(100% - 48px)' }}>
+              <ChatWindow
+                recipientId={selectedUserId || ''}
+                recipientName={selectedUserName}
+              />
             </Paper>
           </Box>
         )
       ) : (
         // Desktop view with grid layout
         <Grid container spacing={2} sx={{ height: 'calc(100% - 48px)' }}>
-          <Grid item xs={12} md={4} lg={3} sx={{ height: '100%' }}>
+          <Grid item xs={4}>
             <Paper sx={{ height: '100%' }}>
               <ChatList
-                onChatSelect={handleChatSelect}
-                selectedUserId={selectedUserId || undefined}
+                onSelectChat={handleChatSelect}
+                selectedChatId={selectedUserId}
+                type="patient"
               />
             </Paper>
           </Grid>
-          <Grid item xs={12} md={8} lg={9} sx={{ height: '100%' }}>
+          <Grid item xs={8}>
             <Paper sx={{ height: '100%' }}>
               {selectedUserId ? (
                 <ChatWindow
@@ -267,23 +246,13 @@ function PatientMessagesPage() {
                   sx={{
                     height: '100%',
                     display: 'flex',
-                    justifyContent: 'center',
                     alignItems: 'center',
-                    flexDirection: 'column',
-                    p: 3,
+                    justifyContent: 'center',
                   }}
                 >
-                  <Typography variant="h6" color="text.secondary" gutterBottom>
-                    Select a conversation or start a new one
+                  <Typography color="text.secondary">
+                    Select a conversation to start messaging
                   </Typography>
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={handleOpenComposeDialog}
-                    sx={{ mt: 2 }}
-                  >
-                    New Message
-                  </Button>
                 </Box>
               )}
             </Paper>
@@ -291,86 +260,59 @@ function PatientMessagesPage() {
         </Grid>
       )}
 
-      {/* Mobile floating action button for new message */}
-      {isMobile && showChatList && (
-        <Fab
-          color="primary"
-          aria-label="new message"
-          sx={{ position: 'fixed', bottom: 16, right: 16 }}
-          onClick={handleOpenComposeDialog}
-        >
-          <AddIcon />
-        </Fab>
-      )}
-
-      {/* New message dialog */}
-      <Dialog open={showComposeDialog} onClose={handleCloseComposeDialog} fullWidth maxWidth="sm">
+      {/* Compose Dialog */}
+      <Dialog
+        open={showComposeDialog}
+        onClose={handleCloseComposeDialog}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle>New Message</DialogTitle>
         <DialogContent>
-          {errorState.hasError && errorState.errorContext === 'Failed to load providers' && (
-            <Alert 
-              severity="error" 
-              action={
-                <Button 
-                  color="inherit" 
-                  size="small" 
-                  startIcon={<RefreshIcon />}
-                  onClick={handleOpenComposeDialog}
-                >
-                  Retry
-                </Button>
-              }
-              sx={{ mb: 2, mt: 1 }}
-            >
-              {errorState.errorMessage}
-            </Alert>
-          )}
-          <Autocomplete
-            options={providers}
-            loading={loadingProviders}
-            getOptionLabel={(option) => option.name}
-            value={selectedProvider}
-            onChange={(_, newValue) => setSelectedProvider(newValue)}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Select Provider"
-                fullWidth
-                margin="normal"
-                variant="outlined"
-                InputProps={{
-                  ...params.InputProps,
-                  endAdornment: (
-                    <>
-                      {loadingProviders ? <CircularProgress color="inherit" size={20} /> : null}
-                      {params.InputProps.endAdornment}
-                    </>
-                  ),
-                }}
-                error={errorState.hasError && errorState.errorContext === 'Failed to send message' && !selectedProvider}
-                helperText={errorState.hasError && errorState.errorContext === 'Failed to send message' && !selectedProvider ? 'Please select a provider' : ''}
-              />
-            )}
-          />
-          <TextField
-            label="Message"
-            multiline
-            rows={4}
-            fullWidth
-            margin="normal"
-            variant="outlined"
-            value={newMessageText}
-            onChange={(e) => setNewMessageText(e.target.value)}
-            error={errorState.hasError && errorState.errorContext === 'Failed to send message' && !newMessageText.trim()}
-            helperText={errorState.hasError && errorState.errorContext === 'Failed to send message' && !newMessageText.trim() ? 'Please enter a message' : ''}
-          />
+          <Box sx={{ mt: 2 }}>
+            <Autocomplete
+              options={providers}
+              getOptionLabel={(option) => option.name}
+              value={selectedProvider}
+              onChange={(_, newValue) => setSelectedProvider(newValue)}
+              loading={loadingProviders}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Select Provider"
+                  error={!!error && error === 'Failed to load providers'}
+                  helperText={error === 'Failed to load providers' ? error : ''}
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingProviders ? (
+                          <CircularProgress color="inherit" size={20} />
+                        ) : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+            <TextField
+              fullWidth
+              multiline
+              rows={4}
+              label="Message"
+              value={newMessageText}
+              onChange={(e) => setNewMessageText(e.target.value)}
+              sx={{ mt: 2 }}
+            />
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseComposeDialog}>Cancel</Button>
           <Button
-            variant="contained"
             onClick={handleSendNewMessage}
-            disabled={!selectedProvider || !newMessageText.trim() || sendingMessage || loadingProviders}
+            variant="contained"
+            disabled={!selectedProvider || !newMessageText.trim() || sendingMessage}
           >
             {sendingMessage ? <CircularProgress size={24} /> : 'Send'}
           </Button>

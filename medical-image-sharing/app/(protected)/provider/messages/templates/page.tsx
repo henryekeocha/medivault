@@ -40,7 +40,7 @@ import {
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { useToast } from '@/contexts/ToastContext';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 
 // Template category options
 const categories = [
@@ -138,8 +138,7 @@ export default function MessageTemplatesPage() {
     try {
       setLoading(true);
       setError(null);
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getMessageTemplates();
+      const response = await providerClient.getMessageTemplates();
       
       if (response.status === 'success' && response.data) {
         setTemplates(response.data);
@@ -157,8 +156,7 @@ export default function MessageTemplatesPage() {
 
   const fetchTemplateCategories = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getMessageTemplateCategories();
+      const response = await providerClient.getMessageTemplateCategories();
       
       if (response.status === 'success' && response.data) {
         setCategories(response.data);
@@ -167,7 +165,6 @@ export default function MessageTemplatesPage() {
       }
     } catch (err) {
       console.error('Error fetching template categories:', err);
-      // Not showing error to user as this is not critical
     }
   };
 

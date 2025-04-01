@@ -29,30 +29,15 @@ import {
   Error as ErrorIcon,
 } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
-import { apiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
 import { useToast } from '@/hooks/useToast';
-import { ImageType as PrismaImageType } from '@prisma/client';
+import { ImageType } from '@/lib/api/types';
+import { User } from '@/lib/api/types';
+import { AxiosProgressEvent } from '@/lib/api/sharedClient';
 
-// Define our own ImageType enum that maps to what the API expects
-enum ImageType {
-  XRAY = 'xray',
-  MRI = 'mri',
-  CT = 'ct',
-  ULTRASOUND = 'ultrasound',
-  OTHER = 'other'
-}
-
-// Define a mapping function to convert our enum to the Prisma enum
-function toPrismaImageType(type: ImageType): PrismaImageType {
-  // Create a mapping between our enum and Prisma's enum
-  const mapping: Record<ImageType, PrismaImageType> = {
-    [ImageType.XRAY]: PrismaImageType.XRAY,
-    [ImageType.MRI]: PrismaImageType.MRI,
-    [ImageType.CT]: PrismaImageType.CT,
-    [ImageType.ULTRASOUND]: PrismaImageType.ULTRASOUND,
-    [ImageType.OTHER]: PrismaImageType.OTHER
-  };
-  return mapping[type];
+interface Provider extends User {
+  specialty?: string;
+  hospital?: string;
 }
 
 interface FileUpload {
@@ -60,11 +45,6 @@ interface FileUpload {
   progress: number;
   status: 'pending' | 'uploading' | 'success' | 'error';
   error?: string;
-}
-
-interface Provider {
-  id: string;
-  name: string;
 }
 
 export default function PatientUploadPage() {
@@ -82,7 +62,7 @@ export default function PatientUploadPage() {
       try {
         setLoadingProviders(true);
         setError(null);
-        const response = await apiClient.getProviders();
+        const response = await patientClient.getProviders();
         if (response.status === 'success' && response.data) {
           setProviders(response.data);
         } else {
@@ -145,17 +125,16 @@ export default function PatientUploadPage() {
       try {
         // Prepare metadata
         const metadata = {
-          type: imageType ? toPrismaImageType(imageType as ImageType) : undefined,
+          type: imageType,
           description: description,
-          ...(provider ? { sharedWithProviders: [provider] } : {}),
+          ...(provider ? { providerId: provider } : {}),
         };
         
         // Upload file
-        await apiClient.uploadImage(
+        await patientClient.uploadImage(
           updatedFiles[i].file,
           metadata,
-          (progressEvent) => {
-            const progress = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
+          (progress: number) => {
             updatedFiles[i] = {
               ...updatedFiles[i],
               progress,

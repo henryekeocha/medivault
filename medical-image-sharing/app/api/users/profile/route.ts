@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
+import { auth } from '@clerk/nextjs/server';
 import { ZodError, z } from 'zod';
 import { getErrorResponse } from '@/lib/api/error-handler';
-import { authOptions } from '../../auth/[...nextauth]/route';
 import { prisma } from '@/lib/db';
 import { getPresignedDownloadUrl } from '@/lib/api/s3-api';
 
@@ -23,9 +22,9 @@ const profileUpdateSchema = z.object({
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify user authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Verify user authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to access your profile' },
         { status: 401 }
@@ -34,7 +33,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Retrieve user profile with non-sensitive information
     const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { authId: userId },
       select: {
         id: true,
         name: true,
@@ -105,9 +104,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
  */
 export async function PATCH(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify user authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Verify user authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to update your profile' },
         { status: 401 }
@@ -119,7 +118,7 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
 
     // Check if user exists
     const userExists = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { authId: userId },
       select: { 
         id: true,
         profile: true
@@ -165,10 +164,10 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
     // Start a transaction to update both user and profile
     const updatedUser = await prisma.$transaction(async (tx) => {
       // Update user if there are changes
-      let user = session.user;
+      let user;
       if (Object.keys(userUpdate).length > 0) {
         user = await tx.user.update({
-          where: { id: session.user.id },
+          where: { authId: userId },
           data: userUpdate,
           select: {
             id: true, 
@@ -183,7 +182,7 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
       } else {
         // Fetch current user data if no updates
         user = await tx.user.findUnique({
-          where: { id: session.user.id },
+          where: { authId: userId },
           select: {
             id: true, 
             name: true, 
@@ -196,18 +195,20 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
         });
       }
 
+      if (!user) {
+        throw new Error('User not found');
+      }
+
       // Update or create profile if there are changes
       let profile = null;
       if (Object.keys(profileUpdate).length > 0) {
         profile = await tx.profile.upsert({
-          where: { 
-            userId: session.user.id 
-          },
-          update: profileUpdate,
+          where: { userId: user.id },
           create: {
             ...profileUpdate,
-            userId: session.user.id
+            userId: user.id
           },
+          update: profileUpdate,
           select: {
             id: true,
             bio: true,
@@ -217,10 +218,9 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
             acceptingNewPatients: true
           }
         });
-      } else if (userExists.profile) {
-        // Fetch current profile data if no updates
+      } else {
         profile = await tx.profile.findUnique({
-          where: { userId: session.user.id },
+          where: { userId: user.id },
           select: {
             id: true,
             bio: true,
@@ -232,21 +232,10 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
         });
       }
 
-      // Log the profile update
-      await tx.securityLog.create({
-        data: {
-          userId: session.user.id,
-          action: 'PROFILE_UPDATED',
-          ipAddress: req.headers.get('x-forwarded-for') || null,
-          userAgent: req.headers.get('user-agent') || null,
-          metadata: JSON.stringify({ 
-            updatedFields: Object.keys({ ...userUpdate, ...profileUpdate }),
-            timestamp: new Date()
-          })
-        }
-      });
-
-      return { ...user, profile };
+      return {
+        ...user,
+        profile
+      };
     });
 
     // Generate a presigned URL for the profile image if it exists
@@ -254,8 +243,8 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
     if (updatedUser.image) {
       try {
         imageUrl = await getPresignedDownloadUrl(
-          process.env.S3_BUCKET_NAME || 'medical-images', 
-          updatedUser.image, 
+          process.env.S3_BUCKET_NAME || 'medical-images',
+          updatedUser.image,
           60 * 15 // 15 minutes
         );
       } catch (error) {
@@ -263,16 +252,20 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Format and return the response
-    return NextResponse.json({
+    // Format the response
+    const responseUser = {
       ...updatedUser,
       image: imageUrl
-    }, { status: 200 });
+    };
+
+    return NextResponse.json(responseUser, { status: 200 });
   } catch (error) {
     if (error instanceof ZodError) {
-      return getErrorResponse(error, 400, 'Invalid profile data');
+      return NextResponse.json(
+        { error: 'Validation Error', details: error.errors },
+        { status: 400 }
+      );
     }
-
     console.error('Profile update error:', error);
     return getErrorResponse(error, 500, 'Failed to update user profile');
   }

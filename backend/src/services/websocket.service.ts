@@ -1,9 +1,11 @@
 import { Server } from 'socket.io';
 import { Server as HTTPServer } from 'http';
-import jwt from 'jsonwebtoken';
 import { encryptData, decryptData } from '../middleware/encryption.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import type { User, Appointment } from '@prisma/client';
+import { Socket } from 'socket.io';
+import { clerkClient } from '@clerk/clerk-sdk-node';
+import { AppointmentWithUsers } from '../types/models.js';
 
 interface FileProgress {
   fileId: string;
@@ -37,16 +39,54 @@ export class WebSocketService {
   private fileProgress: Map<string, FileProgress> = new Map();
   private activeViewers: Map<string, Map<string, ViewerState>> = new Map(); // fileId -> Map<userId, ViewerState>
   private fileAnnotations: Map<string, Annotation[]> = new Map();
+  private socketUserMap: Map<string, { id: string; name: string; email?: string; role: string; isAnonymous: boolean }> = new Map();
 
   constructor(server: HTTPServer) {
+    console.log('WebSocketService: Creating Socket.IO server');
+    
     this.io = new Server(server, {
       cors: {
-        origin: [process.env.CORS_ORIGIN || 'http://localhost:3000', 'http://127.0.0.1:3000'],
-        methods: ['GET', 'POST'],
-        credentials: true
+        origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://localhost:3001'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        credentials: true,
+        allowedHeaders: [
+          'Content-Type', 
+          'Authorization', 
+          'X-Requested-With', 
+          'Origin', 
+          'Accept',
+          'x-request-id',
+          'x-clerk-auth-token',
+          'x-clerk-user-id'
+        ]
+      },
+      path: '/socket.io/',
+      transports: ['websocket', 'polling'],
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      connectTimeout: 45000,
+      allowEIO3: true,
+      maxHttpBufferSize: 1e6, // 1MB
+      allowRequest: (req, callback) => {
+        // Log request details
+        console.log(`WebSocketService: Received connection request from ${req.headers.origin} with path ${req.url}`);
+        
+        // Always allow WebSocket connections for now, we'll authenticate in the middleware
+        callback(null, true);
       }
     });
 
+    // Global Socket.IO server event handlers
+    this.io.engine.on('connection_error', (err) => {
+      console.error('WebSocketService: Connection error:', err);
+    });
+
+    this.io.engine.on('headers', (headers, req) => {
+      console.log('WebSocketService: Engine headers event');
+    });
+
+    console.log('WebSocketService: Socket.IO server initialized with path: /socket.io/');
+    
     this.setupAuthentication();
     this.setupEventHandlers();
   }
@@ -54,39 +94,192 @@ export class WebSocketService {
   private setupAuthentication() {
     this.io.use(async (socket, next) => {
       try {
-        const token = socket.handshake.auth.token;
-        if (!token) {
-          console.error('WebSocket auth failed: No token provided');
-          return next(new Error('Authentication error: No token provided'));
+        const socketId = socket.id;
+        console.log(`WebSocket connection attempt from ${socketId}`);
+        
+        // Extract token from multiple possible sources
+        let extractedToken = null;
+        
+        // 1. Try auth.token (primary method)
+        if (socket.handshake.auth && socket.handshake.auth.token) {
+          extractedToken = socket.handshake.auth.token;
+          console.log('WebSocket: Using token from auth object');
         }
-
-        try {
-          const decoded = jwt.verify(token, process.env.JWT_SECRET!) as jwt.JwtPayload;
-          
-          const user = await prisma.user.findUnique({
-            where: { id: decoded.id }
+        
+        // 2. Try query parameter
+        if (!extractedToken && socket.handshake.query && socket.handshake.query.token) {
+          extractedToken = socket.handshake.query.token;
+          if (Array.isArray(extractedToken)) {
+            extractedToken = extractedToken[0];
+          }
+          console.log('WebSocket: Using token from query parameter');
+        }
+        
+        // 3. Try authorization header
+        if (!extractedToken && socket.handshake.headers.authorization) {
+          const authHeader = socket.handshake.headers.authorization;
+          if (authHeader && authHeader.startsWith('Bearer ')) {
+            extractedToken = authHeader.split(' ')[1];
+            console.log('WebSocket: Using token from Authorization header');
+          }
+        }
+        
+        // No token found in any location
+        if (!extractedToken) {
+          console.log(`WebSocket: No token provided for connection ${socketId}`);
+          socket.emit('auth:error', { 
+            type: 'NO_TOKEN',
+            message: 'Authentication required. Please provide a valid token.' 
           });
-
-          if (!user) {
-            console.error(`WebSocket auth failed: User with ID ${decoded.id} not found`);
-            return next(new Error('Authentication error: User not found'));
+          return next(new Error('Authentication token is required'));
+        }
+        
+        console.log(`WebSocket: Found token (${extractedToken.substring(0, 10)}...) for connection ${socketId}`);
+        
+        // Verify Clerk JWT token
+        try {
+          // Ensure Clerk client is initialized
+          if (!process.env.CLERK_SECRET_KEY) {
+            console.error('WebSocketService: CLERK_SECRET_KEY is not defined in environment variables');
+            socket.emit('auth:error', { 
+              type: 'SERVER_ERROR',
+              message: 'Server configuration error. Please try again later.' 
+            });
+            return next(new Error('Server configuration error'));
           }
-
-          if (!user.isActive) {
-            console.error(`WebSocket auth failed: User ${user.email} account is inactive`);
-            return next(new Error('Authentication error: Account inactive'));
+          
+          try {
+            // Verify the Clerk JWT token
+            const { sub: userId } = await clerkClient.verifyToken(extractedToken);
+            
+            if (!userId) {
+              console.error(`WebSocketService: Invalid JWT token for connection ${socketId}`);
+              socket.emit('auth:error', { 
+                type: 'INVALID_TOKEN',
+                message: 'Invalid token. Please log in again.' 
+              });
+              return next(new Error('Invalid authentication token'));
+            }
+                        
+            // Get user from Clerk
+            const clerkUser = await clerkClient.users.getUser(userId);
+            if (!clerkUser) {
+              console.log(`WebSocketService: Clerk user not found for connection ${socketId}`);
+              socket.emit('auth:error', { message: 'User not found. Please log in again.' });
+              return next(new Error('User not found'));
+            }
+            
+            console.log(`WebSocketService: Found Clerk user ${userId} for connection ${socketId}`);
+            
+            // Get user from database with the Clerk authId
+            const user = await prisma.user.findFirst({
+              where: { authId: userId }
+            });
+            
+            if (!user) {
+              console.log(`WebSocket: User with Clerk ID ${userId} not found in database`);
+              
+              // Instead of disconnecting, we'll create a temporary user object with limited access
+              socket.data.user = {
+                id: userId,
+                name: `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim(),
+                authId: userId,
+                role: 'GUEST',
+                isAnonymous: true
+              };
+              
+              socket.emit('auth:status', { 
+                status: 'LIMITED_ACCESS',
+                message: 'User not found in database. Limited access granted.'
+              });
+              
+              // Store socket in its own room
+              socket.join(`user:${userId}`);
+              this.addUserSocket(userId, socket.id);
+              this.socketUserMap.set(socket.id, {
+                id: userId,
+                name: socket.data.user.name,
+                role: 'GUEST',
+                isAnonymous: true
+              });
+              
+              return next();
+            }
+            
+            if (!user.isActive) {
+              console.log(`WebSocket: User ${userId} account is inactive`);
+              socket.emit('auth:error', { message: 'Your account has been deactivated.' });
+              return next(new Error('Account deactivated'));
+            }
+            
+            // Store user data in socket
+            socket.data.user = {
+              id: user.id,
+              name: user.name || '',
+              email: user.email,
+              authId: user.authId,
+              role: user.role,
+              isAnonymous: false
+            };
+            
+            // Emit successful authentication
+            socket.emit('auth:status', { 
+              status: 'AUTHENTICATED',
+              user: {
+                id: user.id,
+                name: user.name,
+                role: user.role
+              }
+            });
+            
+            // Store socket in multiple rooms for better organization
+            socket.join(`user:${user.id}`);
+            socket.join(`role:${user.role}`);
+            
+            // Keep track of user's sockets
+            this.addUserSocket(user.id, socket.id);
+            this.socketUserMap.set(socket.id, {
+              id: user.id,
+              name: user.name || '',
+              email: user.email || undefined,
+              role: user.role,
+              isAnonymous: false
+            });
+            
+            // Update user's last active timestamp
+            try {
+              await prisma.user.update({
+                where: { id: user.id },
+                data: { 
+                  updatedAt: new Date() 
+                }
+              });
+            } catch (updateError) {
+              // Non-fatal error, just log it
+              console.error('Failed to update user activity timestamp:', updateError);
+            }
+            
+            return next();
+          } catch (tokenError) {
+            console.error('WebSocket: Token verification error:', tokenError);
+            socket.emit('auth:error', { 
+              type: 'INVALID_TOKEN',
+              message: 'Invalid token. Please log in again.' 
+            });
+            return next(new Error('Invalid token'));
           }
-
-          console.log(`WebSocket auth successful for user ${user.email}`);
-          socket.data.user = user;
-          next();
-        } catch (jwtError) {
-          console.error('WebSocket auth failed: Invalid JWT token', jwtError);
-          return next(new Error('Authentication error: Invalid token'));
+        } catch (error) {
+          console.error('WebSocket: Clerk authentication error:', error);
+          socket.emit('auth:error', { 
+            type: 'AUTH_ERROR',
+            message: 'Authentication error. Please log in again.' 
+          });
+          socket.disconnect(true);
         }
       } catch (error) {
         console.error('WebSocket auth error:', error);
-        next(new Error('Authentication error'));
+        socket.emit('auth:error', { message: 'Authentication error. Please try again.' });
+        socket.disconnect(true);
       }
     });
   }
@@ -95,33 +288,154 @@ export class WebSocketService {
     this.io.on('connection', (socket) => {
       const userId = socket.data.user.id;
       const userName = socket.data.user.name;
+      const isAnonymous = socket.data.isAnonymous;
       
       // Store socket connection
       this.addUserSocket(userId, socket.id);
 
-      // Handle chat messages
-      socket.on('chat:message', async (data) => {
+      // Log additional connection info
+      console.log(`WebSocket connected for user ${userId} (${isAnonymous ? 'anonymous' : 'authenticated'})`);
+      
+      // Handle disconnection
+      socket.on('disconnect', (reason: string) => {
+        console.log(`WebSocket disconnected for user ${userId}: ${reason}`);
+        this.removeUserSocket(userId, socket.id);
+        
+        // Clean up viewer states
+        this.activeViewers.forEach((viewers, fileId) => {
+          if (viewers.has(userId)) {
+            viewers.delete(userId);
+          }
+        });
+      });
+
+      // Handle token refresh
+      socket.on('token:refresh', async (newToken: string) => {
         try {
-          const decryptedData = this.processIncomingMessage(data);
-          // Process message and broadcast to relevant users
-          this.broadcastToUsers([userId], 'chat:message', decryptedData);
+          const socketId = socket.id;
+          const currentUser = this.socketUserMap.get(socketId);
+          
+          // No user data found for this socket
+          if (!currentUser) {
+            console.log(`WebSocket: Token refresh failed - no user data for socket ${socketId}`);
+            socket.emit('token:refresh:error', { message: 'No user data found for this connection' });
+            return;
+          }
+          
+          // Verify the new token with Clerk
+          try {
+            // Verify the Clerk session
+            const session = await clerkClient.sessions.getSession(newToken);
+            if (!session || session.status !== 'active') {
+              throw new Error('Invalid session');
+            }
+            
+            // Get user from Clerk
+            const clerkUser = await clerkClient.users.getUser(session.userId);
+            if (!clerkUser) {
+              throw new Error('User not found');
+            }
+            
+            const userId = clerkUser.id;
+            
+            // Check if the new token is for the same user
+            if (currentUser.id !== userId && !currentUser.isAnonymous) {
+              console.log(`WebSocket: Token refresh user mismatch - ${currentUser.id} vs ${userId}`);
+              socket.emit('token:refresh:error', { message: 'Token user mismatch' });
+              return;
+            }
+            
+            // Update handshake auth
+            socket.handshake.auth.token = newToken;
+            
+            // If this was an anonymous user, update to authenticated
+            if (currentUser.isAnonymous) {
+              console.log(`WebSocket: Anonymous user ${currentUser.id} authenticated as ${userId}`);
+              
+              // Find user in database
+              this.findUserById(userId)
+                .then(user => {
+                  if (!user) {
+                    console.log(`WebSocket: User ${userId} not found in database`);
+                    socket.emit('token:refresh:error', { message: 'User not found' });
+                    return;
+                  }
+                  
+                  // Update user data
+                  this.socketUserMap.set(socketId, { 
+                    id: userId,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role,
+                    isAnonymous: false
+                  });
+                  
+                  // Add socket to user's connection list
+                  const userSockets = this.userSockets.get(userId) || [];
+                  userSockets.push(socketId);
+                  this.userSockets.set(userId, userSockets);
+                  
+                  console.log(`WebSocket: Token refreshed for user ${user.name} (${userId})`);
+                  socket.emit('token:refresh:success', { message: 'Token refreshed successfully' });
+                })
+                .catch(error => {
+                  console.error('Error finding user:', error);
+                  socket.emit('token:refresh:error', { message: 'Failed to update user data' });
+                });
+            } else {
+              console.log(`WebSocket: Token refreshed for user ${currentUser.id}`);
+              socket.emit('token:refresh:success', { message: 'Token refreshed successfully' });
+            }
+          } catch (error) {
+            console.error('WebSocket: Clerk token verification error:', error);
+            socket.emit('token:refresh:error', { message: 'Failed to verify token' });
+          }
         } catch (error) {
-          this.sendError(socket, 'Error processing message');
+          console.error('WebSocket token refresh error:', error);
+          socket.emit('token:refresh:error', { message: 'Failed to refresh token' });
         }
       });
 
-      // Handle notifications
-      socket.on('notification:subscribe', (data) => {
-        socket.join(`notifications:${userId}`);
+      // Handle reconnection attempts
+      socket.on('reconnect_attempt', (attemptNumber: number) => {
+        console.log(`WebSocket: Reconnection attempt ${attemptNumber} for user ${userId}`);
       });
 
-      // Handle real-time updates
-      socket.on('updates:subscribe', (data) => {
-        const { type } = data;
-        socket.join(`updates:${type}:${userId}`);
+      // Handle reconnection
+      socket.on('reconnect', () => {
+        console.log(`WebSocket: Reconnected for user ${userId}`);
+        // Rejoin necessary rooms
+        if (!isAnonymous) {
+          socket.join(`notifications:${userId}`);
+        }
       });
 
-      // Handle file upload progress tracking
+      // Only set up authenticated event handlers if not anonymous
+      if (!isAnonymous) {
+        // Handle chat messages
+        socket.on('chat:message', async (data) => {
+          try {
+            const decryptedData = this.processIncomingMessage(data);
+            // Process message and broadcast to relevant users
+            this.broadcastToUsers([userId], 'chat:message', decryptedData);
+          } catch (error) {
+            this.sendError(socket, 'Error processing message');
+          }
+        });
+
+        // Handle notifications
+        socket.on('notification:subscribe', (data) => {
+          socket.join(`notifications:${userId}`);
+        });
+
+        // Handle real-time updates
+        socket.on('updates:subscribe', (data) => {
+          const { type } = data;
+          socket.join(`updates:${type}:${userId}`);
+        });
+      }
+
+      // Handle file upload progress tracking (available for both anonymous and authenticated users)
       socket.on('file:upload:start', (data: { fileId: string }) => {
         this.fileProgress.set(data.fileId, {
           fileId: data.fileId,
@@ -261,19 +575,6 @@ export class WebSocketService {
           }
         }
       });
-
-      // Handle disconnection
-      socket.on('disconnect', () => {
-        this.removeUserSocket(userId, socket.id);
-        
-        // Clean up viewer states
-        this.activeViewers.forEach((viewers, fileId) => {
-          if (viewers.has(userId)) {
-            viewers.delete(userId);
-            this.broadcastViewerState(fileId);
-          }
-        });
-      });
     });
   }
 
@@ -387,13 +688,44 @@ export class WebSocketService {
     this.broadcastToRoom(`file:${fileId}`, 'annotation:update', { action, annotation });
   }
 
-  public notifyAppointmentUpdated(appointment: Appointment) {
-    this.sendUpdate('appointment', appointment.patientId, appointment);
-    this.sendUpdate('appointment', appointment.doctorId, appointment);
+  public notifyAppointmentUpdated(appointment: Appointment | AppointmentWithUsers) {
+    this.sendUpdate('appointment', 'isAppointmentWithUsers' in appointment ? appointment.patientId : appointment.patientId, appointment);
+    this.sendUpdate('appointment', 'isAppointmentWithUsers' in appointment ? appointment.doctorId : appointment.doctorId, appointment);
   }
 
-  public notifyAppointmentCreated(appointment: Appointment) {
-    this.sendUpdate('appointment', appointment.patientId, appointment);
-    this.sendUpdate('appointment', appointment.doctorId, appointment);
+  public notifyAppointmentCreated(appointment: Appointment | AppointmentWithUsers) {
+    this.sendUpdate('appointment', 'isAppointmentWithUsers' in appointment ? appointment.patientId : appointment.patientId, appointment);
+    this.sendUpdate('appointment', 'isAppointmentWithUsers' in appointment ? appointment.doctorId : appointment.doctorId, appointment);
+  }
+
+  private findUserById(userId: string): Promise<User | null> {
+    return prisma.user.findUnique({
+      where: { id: userId }
+    });
+  }
+
+  private async checkServerHealth(url: string): Promise<boolean> {
+    // Extract the hostname and port to build an HTTP health check URL
+    try {
+      // Parse the WebSocket URL and convert to HTTP for health check
+      const wsUrl = new URL(url);
+      const protocol = wsUrl.protocol === 'wss:' ? 'https:' : 'http:';
+      const healthUrl = `${protocol}//${wsUrl.host}/api/health`;
+      
+      console.log(`Checking server health at: ${healthUrl}`);
+      
+      const response = await fetch(healthUrl);
+      
+      if (response.ok) {
+        console.log(`Health check successful: ${healthUrl}`);
+        return true;
+      } else {
+        console.error(`Health check failed with status: ${response.status}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`Primary health check failed:`, error);
+      return false;
+    }
   }
 } 

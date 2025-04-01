@@ -19,8 +19,6 @@ export interface User {
   password?: string;
   role: Role;
   specialty?: ProviderSpecialty;
-  twoFactorEnabled: boolean;
-  twoFactorSecret?: string;
   lastLoginAt?: Date;
   lastLoginIp?: string;
   createdAt: Date;
@@ -133,6 +131,7 @@ export interface AppointmentWithUsers {
   id: string;
   startTime: Date;
   endTime: Date;
+  datetime: Date;
   status: AppointmentStatus;
   patientId: string;
   doctorId: string;
@@ -148,12 +147,10 @@ export interface AppointmentWithUsers {
     specialty: ProviderSpecialty | null | undefined;
     image: string | null;
     username: string | null;
-    password: string;
+    password: string | null;
     emailVerified: Date | null;
     createdAt: Date;
     isActive: boolean;
-    twoFactorEnabled: boolean;
-    twoFactorSecret: string | null;
   };
   doctor: {
     id: string;
@@ -163,12 +160,10 @@ export interface AppointmentWithUsers {
     specialty: ProviderSpecialty | null | undefined;
     image: string | null;
     username: string | null;
-    password: string;
+    password: string | null;
     emailVerified: Date | null;
     createdAt: Date;
     isActive: boolean;
-    twoFactorEnabled: boolean;
-    twoFactorSecret: string | null;
   };
 }
 

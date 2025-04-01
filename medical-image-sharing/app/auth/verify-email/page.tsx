@@ -21,12 +21,14 @@ import {
   Numbers as NumbersIcon,
   Send as SendIcon,
 } from '@mui/icons-material';
-import { useSession } from "next-auth/react";
+import { useAuth, useUser, useSignUp, useClerk } from '@clerk/nextjs';
 import { routes } from '@/config/routes';
 import type { Route } from 'next';
+import { Role } from '@prisma/client';
+import { createUserFromClerk } from '@/lib/clerk/create-user';
+import axios from 'axios';
 
 export default function VerifyEmailPage() {
-  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -36,28 +38,37 @@ export default function VerifyEmailPage() {
   
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { data: session } = useSession();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { user } = useUser();
+  const { signUp } = useSignUp();
+  const { signOut } = useClerk();
   
-  // If user is already authenticated, redirect to dashboard
+  // If user is already authenticated and email is verified, redirect to dashboard
   useEffect(() => {
-    if (session) {
-      router.push('/dashboard');
+    if (isLoaded && isSignedIn && user?.primaryEmailAddress?.verification?.status === 'verified') {
+      if (user?.publicMetadata?.role) {
+        const role = user.publicMetadata.role as Role;
+        switch (role) {
+          case Role.PATIENT:
+            router.push(routes.patient.dashboard as Route);
+            break;
+          case Role.PROVIDER:
+            router.push(routes.provider.dashboard as Route);
+            break;
+          default:
+            router.push('/dashboard');
+        }
+      } else {
+        router.push('/dashboard');
+      }
     }
-  }, [session, router]);
-  
-  // Get email from query parameters if available
-  useEffect(() => {
-    const emailParam = searchParams?.get('email');
-    if (emailParam) {
-      setEmail(emailParam);
-    }
-  }, [searchParams]);
+  }, [isLoaded, isSignedIn, user, router]);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!email || !code) {
-      setError('Email and verification code are required');
+    if (!code) {
+      setError('Verification code is required');
       return;
     }
     
@@ -65,43 +76,121 @@ export default function VerifyEmailPage() {
     setError(null);
     
     try {
-      // Call API route to verify email
-      const response = await fetch('/api/auth/verify-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email,
-          token: code,
-        }),
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to verify email');
+      if (!signUp) {
+        throw new Error('Sign up session not found. Please try registering again.');
       }
-      
-      // Show success message and redirect to login
-      setSuccess(true);
-      
-      // Redirect to login after 2 seconds
-      setTimeout(() => {
-        router.push(routes.root.login as Route);
-      }, 2000);
+
+      // Clear any potentially stale sessions before verification
+      if (isSignedIn) {
+        console.log('User is already signed in before verification, attempting to refresh session');
+        try {
+          await router.push(`${routes.root.login as Route}?message=verification_complete`);
+          return;
+        } catch (refreshError) {
+          console.error('Error refreshing session:', refreshError);
+        }
+      }
+
+      const result = await signUp.attemptEmailAddressVerification({
+        code,
+      });
+
+      if (result.status === "complete") {
+        console.log('Verification complete, showing success message');
+        setSuccess(true);
+        
+        try {
+          // Synchronize the user with our database
+          const pendingRole = localStorage.getItem('pendingUserRole');
+          const pendingSpecialty = localStorage.getItem('pendingUserSpecialty');
+          const userId = result.createdUserId;
+          
+          if (userId) {
+            console.log('Attempting to sync user after verification:', userId);
+            try {
+              // Try to sync using our utility function
+              await axios.post(`/api/auth/sync/${userId}`, {
+                role: pendingRole || 'PATIENT',
+                specialty: pendingSpecialty || undefined
+              });
+              console.log('User sync successful after verification');
+              localStorage.setItem('userSyncStatus', 'success');
+            } catch (syncError) {
+              console.error('Error syncing user after verification:', syncError);
+              localStorage.setItem('userSyncStatus', 'failed');
+              // We'll still continue with the flow despite sync failure
+            }
+          }
+
+          // Clear any existing session to prevent "already signed in" errors
+          console.log('Attempting to clear session after verification');
+          try {
+            if (signOut) {
+              await signOut();
+              console.log('Session cleared successfully after verification');
+            }
+          } catch (signOutError) {
+            console.warn('Non-critical error clearing session:', signOutError);
+            // Continue regardless - this is just to clean up
+          }
+          
+          // Clear clerk browser storage to ensure a clean state
+          localStorage.removeItem('clerk-db-auth');
+          
+          // When a user verifies their email, they don't have a full account yet
+          // We should redirect them to login page to complete the flow
+          setTimeout(() => {
+            console.log('Redirecting to login page after verification');
+            // Store verification state in localStorage to help with debugging
+            localStorage.setItem('emailVerificationCompleted', 'true');
+            localStorage.setItem('verificationTimestamp', Date.now().toString());
+            localStorage.setItem('verificationStatus', 'complete');
+            
+            // Check if we have a pending role - keep it for login
+            const pendingRole = localStorage.getItem('pendingUserRole');
+            if (pendingRole) {
+              console.log('Verification complete with pending role:', pendingRole);
+            }
+            
+            // Redirect to login with special parameter to indicate verification is complete
+            // Force page reload to clear any lingering state
+            window.location.href = `${routes.root.login}?message=verification_complete&reset=true`;
+          }, 2000);
+        } catch (error) {
+          console.error('Error during post-verification cleanup:', error);
+          // Still redirect to login
+          setTimeout(() => {
+            router.push(`${routes.root.login as Route}?message=verification_complete`);
+          }, 2000);
+        }
+      } else if (result.status === "missing_requirements") {
+        // Handle the case where verification is successful but more steps are needed
+        console.log('Verification successful but additional steps required');
+        setSuccess(true);
+        
+        // Redirect to login page with a success message
+        setTimeout(() => {
+          console.log('Redirecting to login page for additional requirements');
+          // Store verification state in localStorage to help with debugging
+          localStorage.setItem('emailVerificationCompleted', 'true');
+          localStorage.setItem('verificationTimestamp', Date.now().toString());
+          localStorage.setItem('verificationStatus', 'missing_requirements');
+          
+          router.push(`${routes.root.login as Route}?message=verification_complete`);
+        }, 2000);
+      } else {
+        setError('Verification failed. Please try again.');
+      }
     } catch (err: any) {
       console.error('Email verification error:', err);
       
       // Handle common verification errors
-      if (err.message.includes('token') || err.message.includes('code')) {
+      if (err.message.includes('code') || err.message.includes('token')) {
         setError('Invalid verification code. Please try again.');
       } else if (err.message.includes('expired')) {
         setError('Verification code has expired. Please request a new one.');
-      } else if (err.message.includes('user') || err.message.includes('account')) {
-        setError('We could not find an account with this email address.');
-      } else if (err.message.includes('already verified') || err.message.includes('already confirmed')) {
-        setError('This account has already been verified. You can now log in.');
+      } else if (err.message.includes('session')) {
+        setError('Verification session expired. Please try registering again.');
       } else {
         setError('Failed to verify email. Please try again.');
       }
@@ -111,8 +200,8 @@ export default function VerifyEmailPage() {
   };
   
   const handleResendCode = async () => {
-    if (!email) {
-      setError('Please enter your email address');
+    if (!signUp) {
+      setError('Sign up session not found. Please try registering again.');
       return;
     }
     
@@ -121,22 +210,10 @@ export default function VerifyEmailPage() {
     setResendSuccess(false);
     
     try {
-      // Call API route to resend verification code
-      const response = await fetch('/api/auth/resend-verification', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
+      await signUp.prepareEmailAddressVerification({
+        strategy: "email_code"
       });
       
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to resend verification code');
-      }
-      
-      // Show success message
       setResendSuccess(true);
       
       // Clear the resend success message after 5 seconds
@@ -145,17 +222,7 @@ export default function VerifyEmailPage() {
       }, 5000);
     } catch (err: any) {
       console.error('Resend verification code error:', err);
-      
-      // Handle common resend errors
-      if (err.message.includes('user') || err.message.includes('account')) {
-        setError('We could not find an account with this email address.');
-      } else if (err.message.includes('rate limit') || err.message.includes('too many')) {
-        setError('Too many attempts. Please try again later.');
-      } else if (err.message.includes('email') || err.message.includes('format')) {
-        setError('Invalid email format. Please enter a valid email address.');
-      } else {
-        setError('Failed to resend code. Please try again.');
-      }
+      setError('Failed to resend code. Please try again.');
     } finally {
       setIsResending(false);
     }
@@ -180,8 +247,7 @@ export default function VerifyEmailPage() {
         
         {success && (
           <Alert severity="success" sx={{ mb: 3 }}>
-            Your email has been successfully verified! You can now log in to your account.
-            Redirecting to login page...
+            Your email has been successfully verified! Redirecting you to sign in...
           </Alert>
         )}
         
@@ -193,34 +259,15 @@ export default function VerifyEmailPage() {
         
         <Box component="form" onSubmit={handleSubmit}>
           <Typography variant="body1" paragraph>
-            Please enter the verification code that was sent to your email address when you registered.
+            Please enter the verification code that was sent to your email address.
           </Typography>
           
           <TextField
             fullWidth
-            label="Email Address"
-            variant="outlined"
-            margin="normal"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={isSubmitting || success}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <EmailIcon />
-                </InputAdornment>
-              ),
-            }}
-          />
-          
-          <TextField
-            fullWidth
             label="Verification Code"
-            variant="outlined"
-            margin="normal"
             value={code}
             onChange={(e) => setCode(e.target.value)}
+            error={!!error}
             disabled={isSubmitting || success}
             InputProps={{
               startAdornment: (
@@ -229,22 +276,19 @@ export default function VerifyEmailPage() {
                 </InputAdornment>
               ),
             }}
+            sx={{ mb: 3 }}
           />
           
           <Button
             fullWidth
-            variant="contained"
-            color="primary"
-            size="large"
             type="submit"
-            sx={{ mt: 3, mb: 2, py: 1.5 }}
-            disabled={isSubmitting || isResending || success || !email || !code}
-            startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : null}
+            variant="contained"
+            disabled={isSubmitting || success}
+            startIcon={isSubmitting ? <CircularProgress size={20} /> : null}
+            sx={{ mb: 3 }}
           >
             {isSubmitting ? 'Verifying...' : 'Verify Email'}
           </Button>
-          
-          <Divider sx={{ my: 2 }} />
           
           <Box sx={{ textAlign: 'center', mt: 2 }}>
             <Typography variant="body2" paragraph>
@@ -254,7 +298,7 @@ export default function VerifyEmailPage() {
             <Button
               variant="outlined"
               onClick={handleResendCode}
-              disabled={isResending || isSubmitting || success || !email}
+              disabled={isResending || isSubmitting || success}
               startIcon={isResending ? <CircularProgress size={16} /> : <SendIcon />}
               sx={{ mb: 3 }}
             >

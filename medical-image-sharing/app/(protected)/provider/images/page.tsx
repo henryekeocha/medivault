@@ -55,13 +55,16 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ApiClient } from '@/lib/api/client';
-import { format } from 'date-fns';
 import { ImageStatus, ImageType } from '@prisma/client';
 import { ImageViewer } from '@/components/images/ImageViewer';
 import { ImageAnalysis } from '@/components/images/ImageAnalysis';
-import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import { imageService } from '@/lib/api/services/image.service';
+import { providerClient } from '@/lib/api/providerClient';
+import { Image, PaginatedResponse, ApiResponse, User, ImageListResponse } from '@/lib/api/types';
+import { Role } from '@prisma/client';
+import { format } from 'date-fns';
+import { useUser } from '@clerk/nextjs';
 
 // Image filter and sort options
 type SortOption = 'newest' | 'oldest' | 'name' | 'type';
@@ -73,8 +76,13 @@ interface PatientOption {
   name: string;
 }
 
+// Helper function to check if response is paginated
+const isPaginatedResponse = (data: PaginatedResponse<Image> | Image[]): data is PaginatedResponse<Image> => {
+  return !Array.isArray(data) && 'data' in data && 'pagination' in data;
+};
+
 export default function ProviderImagesPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useToast();
@@ -100,6 +108,26 @@ export default function ProviderImagesPage() {
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
   const [sortAnchorEl, setSortAnchorEl] = useState<null | HTMLElement>(null);
   
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      router.push('/auth/login');
+      return;
+    }
+
+    // Check if user has provider role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PROVIDER') {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (userRole) {
+      imageService.setUserRole(userRole);
+    }
+  }, [isLoaded, user, router]);
+  
   // Convert filter type to API filter
   const getImageTypeFilter = (): ImageType | undefined => {
     switch (filterType) {
@@ -118,11 +146,16 @@ export default function ProviderImagesPage() {
     
     setIsLoadingPatients(true);
     try {
-      const response = await ApiClient.getInstance().searchPatients({ query });
-      setPatientOptions(response.data.items.map((patient: any) => ({
-        id: patient.id,
-        name: patient.name || `${patient.firstName} ${patient.lastName}`
-      })));
+      const response = await providerClient.searchPatients({ query });
+      if (response.status === 'success' && response.data) {
+        const patientOptions: PatientOption[] = response.data.items.map((patient: User) => ({
+          id: patient.id,
+          name: patient.name
+        }));
+        setPatientOptions(patientOptions);
+      } else {
+        showError('Failed to search patients');
+      }
     } catch (error) {
       console.error('Failed to search patients:', error);
       showError('Failed to search patients');
@@ -143,37 +176,76 @@ export default function ProviderImagesPage() {
     queryKey: ['provider-images', selectedPatient?.id, filterType, sortOption, page, searchTerm],
     queryFn: async () => {
       try {
-        const apiClient = ApiClient.getInstance();
-        const params: any = {
+        const params = {
           page,
           limit,
-          status: ImageStatus.READY,
-          type: getImageTypeFilter(),
-          search: searchTerm || undefined,
           patientId: selectedPatient?.id,
         };
         
-        // Add sorting
-        switch (sortOption) {
-          case 'newest':
-            params.sortBy = 'uploadDate';
-            params.sortOrder = 'desc';
-            break;
-          case 'oldest':
-            params.sortBy = 'uploadDate';
-            params.sortOrder = 'asc';
-            break;
-          case 'name':
-            params.sortBy = 'filename';
-            params.sortOrder = 'asc';
-            break;
-          case 'type':
-            params.sortBy = 'type';
-            params.sortOrder = 'asc';
-            break;
+        const response = await imageService.getImages(params);
+        
+        if (response.status === 'success') {
+          // Handle all possible response data types
+          let images: Image[] = [];
+          
+          if (Array.isArray(response.data)) {
+            images = response.data;
+          } else if (response.data && typeof response.data === 'object') {
+            if ('images' in response.data) {
+              images = (response.data as ImageListResponse).images;
+            } else if (isPaginatedResponse(response.data)) {
+              images = response.data.data;
+            }
+          }
+              
+          let filteredImages = [...images];
+          
+          // Apply type filter
+          const typeFilter = getImageTypeFilter();
+          if (typeFilter) {
+            filteredImages = filteredImages.filter((image) => image.type === typeFilter);
+          }
+          
+          // Apply search filter
+          if (searchTerm) {
+            filteredImages = filteredImages.filter((image) => 
+              image.filename.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              (image.metadata as any)?.notes?.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+          }
+          
+          // Apply sorting
+          filteredImages.sort((a, b) => {
+            switch (sortOption) {
+              case 'newest':
+                return new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime();
+              case 'oldest':
+                return new Date(a.uploadDate).getTime() - new Date(b.uploadDate).getTime();
+              case 'name':
+                return a.filename.localeCompare(b.filename);
+              case 'type':
+                return a.type.localeCompare(b.type);
+              default:
+                return 0;
+            }
+          });
+          
+          // Return in PaginatedResponse format
+          return {
+            status: 'success' as const,
+            data: {
+              data: filteredImages,
+              pagination: {
+                total: filteredImages.length,
+                pages: Math.ceil(filteredImages.length / limit),
+                page,
+                limit
+              }
+            }
+          } as ApiResponse<PaginatedResponse<Image>>;
         }
         
-        return await apiClient.getImages(params);
+        return response;
       } catch (err) {
         console.error('Error fetching images:', err);
         showError('Failed to load images. Please try again later.');
@@ -201,8 +273,7 @@ export default function ProviderImagesPage() {
   
   const handleDownload = async (imageId: string) => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const blob = await apiClient.downloadImage(imageId);
+      const blob = await imageService.downloadImage(imageId);
       
       // Create a URL for the blob
       const url = window.URL.createObjectURL(blob);
@@ -230,7 +301,7 @@ export default function ProviderImagesPage() {
   // Mutation for deleting images
   const deleteImageMutation = useMutation({
     mutationFn: (imageId: string) => {
-      return ApiClient.getInstance().deleteImage(imageId);
+      return imageService.deleteImage(imageId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provider-images'] });
@@ -520,149 +591,123 @@ export default function ProviderImagesPage() {
           <CircularProgress />
         </Box>
       ) : isError ? (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mt: 2 }}>
           Error loading images: {(error as any)?.message || 'Unknown error occurred'}
         </Alert>
-      ) : (!imagesResponse?.data?.data || imagesResponse.data.data.length === 0) ? (
+      ) : (!imagesResponse?.data || !isPaginatedResponse(imagesResponse.data) || imagesResponse.data.data.length === 0) ? (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="h6" color="text.secondary" gutterBottom>
             No images found
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {searchTerm || filterType !== 'all' || selectedPatient
-              ? 'Try adjusting your search filters'
-              : 'Upload some images to get started'}
+          <Typography color="text.secondary">
+            {selectedPatient ? 'This patient has no images yet.' : 'Select a patient to view their images.'}
           </Typography>
-          <Button
-            variant="contained"
-            color="primary"
-            sx={{ mt: 2 }}
-            onClick={() => router.push('/provider/upload')}
-          >
-            Upload Images
-          </Button>
         </Paper>
       ) : (
         <>
           <Grid container spacing={3}>
-            {imagesResponse?.data?.data?.map((image: any) => (
+            {imagesResponse.data.data.map((image: Image) => (
               <Grid item key={image.id} xs={12} sm={6} md={4} lg={3}>
                 <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Box 
-                    sx={{ 
-                      position: 'relative',
+                  <CardMedia
+                    component="img"
+                    sx={{
                       height: 200,
-                      bgcolor: 'grey.100',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      overflow: 'hidden'
+                      objectFit: 'contain',
+                      bgcolor: 'background.default'
                     }}
-                  >
-                    {image.thumbnailUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img 
-                        src={image.thumbnailUrl} 
-                        alt={image.filename}
-                        style={{ 
-                          maxWidth: '100%', 
-                          maxHeight: '100%', 
-                          objectFit: 'contain' 
-                        }}
-                      />
-                    ) : (
-                      <ImageIcon sx={{ fontSize: 60, color: 'text.secondary' }} />
-                    )}
-                    <Chip
-                      label={image.type}
-                      size="small"
-                      color={getImageTypeColor(image.type)}
-                      sx={{ position: 'absolute', top: 8, right: 8 }}
-                    />
-                  </Box>
-                  
+                    image={image.s3Url || `/api/images/${image.id}/view`}
+                    alt={image.filename}
+                    onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
+                      e.currentTarget.src = '/placeholder-image.png';
+                    }}
+                  />
                   <CardContent sx={{ flexGrow: 1 }}>
-                    <Typography variant="subtitle1" noWrap title={image.filename}>
+                    <Typography gutterBottom variant="h6" component="h2" noWrap>
                       {image.filename}
                     </Typography>
-                    
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      {image.studyDate 
-                        ? format(new Date(image.studyDate), 'MMM d, yyyy') 
-                        : format(new Date(image.uploadDate), 'MMM d, yyyy')}
+                      Patient: {image.user?.name || 'Unknown'}
                     </Typography>
-                    
-                    {image.patientName && (
-                      <Typography variant="body2">
-                        Patient: {image.patientName}
+                    <Typography variant="body2" color="text.secondary">
+                      Type: {image.type}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Uploaded: {format(new Date(image.uploadDate), 'MMM d, yyyy')}
+                    </Typography>
+                    {image.studyDate && (
+                      <Typography variant="body2" color="text.secondary">
+                        Study Date: {format(new Date(image.studyDate), 'MMM d, yyyy')}
                       </Typography>
                     )}
-                    
-                    {image.bodyPart && (
+                    {image.modality && (
                       <Typography variant="body2" color="text.secondary">
-                        Body Part: {image.bodyPart}
+                        Modality: {image.modality}
                       </Typography>
                     )}
-                    
-                    {image.diagnosis && (
-                      <Typography variant="body2" color="text.secondary">
-                        Diagnosis: {image.diagnosis}
-                      </Typography>
+                    {image.tags && image.tags.length > 0 && (
+                      <Box sx={{ mt: 1 }}>
+                        {image.tags.map((tag) => (
+                          <Chip
+                            key={tag}
+                            label={tag}
+                            size="small"
+                            sx={{ mr: 0.5, mb: 0.5 }}
+                          />
+                        ))}
+                      </Box>
                     )}
                   </CardContent>
-                  
-                  <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2 }}>
-                    <Box>
-                      <Tooltip title="View Image">
-                        <IconButton onClick={() => handleView(image.id)}>
-                          <ViewIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Share Image">
-                        <IconButton onClick={() => handleShare(image.id)}>
-                          <ShareIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Download Image">
-                        <IconButton onClick={() => handleDownload(image.id)}>
-                          <DownloadIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete Image">
-                        <IconButton 
-                          onClick={() => handleDelete(image.id)}
-                          color="error"
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                    
-                    <Button
-                      variant="contained"
-                      startIcon={<BiotechIcon />}
+                  <CardActions>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleView(image.id)}
+                      title="View"
+                    >
+                      <ViewIcon />
+                    </IconButton>
+                    <IconButton
                       size="small"
                       onClick={() => handleAnalyze(image.id)}
+                      title="Analyze"
                     >
-                      Analyze
-                    </Button>
+                      <BiotechIcon />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleShare(image.id)}
+                      title="Share"
+                    >
+                      <ShareIcon />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleDownload(image.id)}
+                      title="Download"
+                    >
+                      <DownloadIcon />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleDelete(image.id)}
+                      title="Delete"
+                    >
+                      <DeleteIcon />
+                    </IconButton>
                   </CardActions>
                 </Card>
               </Grid>
             ))}
           </Grid>
           
-          {/* Pagination */}
-          {imagesResponse?.data?.pagination?.pages && imagesResponse.data.pagination.pages > 1 && (
-            <Box display="flex" justifyContent="center" mt={4}>
-              <Pagination 
-                count={imagesResponse.data.pagination.pages} 
-                page={page} 
-                onChange={handlePageChange}
-                color="primary"
-              />
-            </Box>
-          )}
+          <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
+            <Pagination
+              count={imagesResponse.data.pagination.pages}
+              page={page}
+              onChange={handlePageChange}
+              color="primary"
+            />
+          </Box>
         </>
       )}
       

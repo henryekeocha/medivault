@@ -21,14 +21,15 @@ import {
   Devices as DevicesIcon
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+import { useUser } from '@clerk/nextjs';
 import { routes, toPath } from '@/config/routes';
+import type { Route } from '@/types/routes';
 
 interface SettingCardProps {
   title: string;
   description: string;
   icon: React.ReactNode;
-  path: string;
+  path: Route;
 }
 
 const SettingCard: React.FC<SettingCardProps> = ({ title, description, icon, path }) => {
@@ -54,14 +55,14 @@ const SettingCard: React.FC<SettingCardProps> = ({ title, description, icon, pat
 };
 
 export default function SettingsPage() {
-  const { data: session, status } = useSession();
+  const { user, isLoaded } = useUser();
   const router = useRouter();
 
-  if (status === 'loading') {
+  if (!isLoaded) {
     return <div>Loading...</div>;
   }
 
-  if (!session) {
+  if (!user) {
     router.push(routes.root.login);
     return null;
   }

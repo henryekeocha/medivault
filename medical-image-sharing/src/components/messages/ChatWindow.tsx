@@ -34,9 +34,9 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
-import { apiClient } from '@/lib/api/client';
+import { patientClient, providerClient, adminClient, sharedClient } from '@/lib/api';
 import { Message } from '@/lib/api/types';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
 import { useToast } from '@/contexts/ToastContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState'; 
@@ -45,18 +45,19 @@ import { LoadingState } from '@/components/LoadingState';
 interface ExtendedMessage extends Message {
   isSender: boolean;
   unread: boolean;
-  attachments?: Array<{
-    id: string;
-    filename: string;
-    url: string;
-    type: string;
-  }>;
 }
 
 interface ChatWindowProps {
   recipientId: string;
   recipientName: string;
   onMessageRead?: () => void;
+}
+
+interface Attachment {
+  id: string;
+  filename: string;
+  url: string;
+  type: string;
 }
 
 // Message templates
@@ -89,26 +90,21 @@ const messageTemplates = [
 ];
 
 export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWindowProps) {
-  const { user } = useAuth();
-  const { showSuccess, showError } = useToast();
-  const { 
-    error, 
-    handleError, 
-    withErrorHandling, 
-    clearErrors,
-    loading: errorLoading
-  } = useErrorHandler({
-    context: 'Chat Window'
-  });
+  const { data: session } = useSession();
+  const { showToast } = useToast();
+  const { handleError } = useErrorHandler();
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [sendingMessage, setSendingMessage] = useState(false);
-  const [messageText, setMessageText] = useState('');
-  const [attachments, setAttachments] = useState<File[]>([]);
-  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
-  const [templateAnchorEl, setTemplateAnchorEl] = useState<null | HTMLElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [newMessage, setNewMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [templateAnchorEl, setTemplateAnchorEl] = useState<null | HTMLElement>(null);
+  const [showAIPrompt, setShowAIPrompt] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   useEffect(() => {
     if (recipientId) {
@@ -122,88 +118,68 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
   }, [messages]);
 
   const fetchMessages = async () => {
-    if (!recipientId) return;
-
-    setLoading(true);
-    clearErrors();
-
     try {
-      const response = await apiClient.getMessages({ receiverId: recipientId });
+      setIsLoading(true);
+      const response = await sharedClient.getMessages(recipientId);
       if (response.status === 'success') {
-        const currentUserId = apiClient.getCurrentUserId() || '';
-        
-        // Transform the messages to include isSender and unread flags
-        const extendedMessages = response.data.map(msg => ({
+        const formattedMessages = response.data.map((msg: Message) => ({
           ...msg,
-          isSender: msg.senderId === currentUserId,
-          unread: msg.readAt === null || msg.readAt === undefined
+          isSender: msg.senderId === session?.user?.id,
+          unread: !msg.readAt,
         })) as ExtendedMessage[];
-        
-        setMessages(extendedMessages);
-        
-        // Mark messages as read
-        extendedMessages.forEach(msg => {
-          if (!msg.isSender && msg.unread) {
-            apiClient.markMessageAsRead(msg.id).catch(err => {
-              console.error("Error marking message as read:", err);
-              // Continue without breaking the user experience
-            });
-          }
-        });
+        setMessages(formattedMessages);
+        setError(null);
 
-        // Mark unread messages as read
-        const unreadMessages = extendedMessages.filter((m: ExtendedMessage) => m.unread);
+        // Mark messages as read
+        const unreadMessages = formattedMessages.filter((m: ExtendedMessage) => m.unread);
         if (unreadMessages.length > 0) {
-          // Make API call to mark messages as read
           await Promise.all(
-            unreadMessages.map((m: ExtendedMessage) => apiClient.markMessageAsRead(m.id))
+            unreadMessages.map((m: ExtendedMessage) => sharedClient.updateMessage(m.id, m.content))
           );
           if (onMessageRead) {
             onMessageRead();
           }
         }
       } else {
-        handleError(new Error(response.error?.message || 'Failed to load messages'));
+        setError('Failed to load messages');
       }
-    } catch (err: any) {
+    } catch (err) {
+      setError('Failed to load messages');
       handleError(err);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleSendMessageAsync = async () => {
-    if (!messageText.trim() && attachments.length === 0) return;
+    if (!newMessage.trim() && attachments.length === 0) return;
 
-    setSendingMessage(true);
     try {
-      const response = await apiClient.sendMessage(recipientId, messageText, attachments);
+      setIsSending(true);
+      const response = await sharedClient.sendMessage(recipientId, newMessage);
       if (response.status === 'success') {
-        // Add isSender and unread flags to the new message
-        const newMessage = {
+        const newMsg: ExtendedMessage = {
           ...response.data,
           isSender: true,
-          unread: false
-        } as ExtendedMessage;
-        
-        setMessages([...messages, newMessage]);
-        setMessageText('');
+          unread: false,
+        };
+        setMessages(prev => [...prev, newMsg]);
+        setNewMessage('');
         setAttachments([]);
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        showSuccess('Message sent successfully');
+        if (onMessageRead) onMessageRead();
       } else {
         throw new Error(response.error?.message || 'Failed to send message');
       }
+    } catch (err) {
+      handleError(err);
+      showToast('Failed to send message', 'error');
     } finally {
-      setSendingMessage(false);
+      setIsSending(false);
     }
   };
   
   const handleSendMessage = () => {
-    withErrorHandling(handleSendMessageAsync, {
-      showToast: true,
-      successMessage: 'Message sent successfully'
-    });
+    handleSendMessageAsync();
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -216,7 +192,12 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files) {
-      setAttachments([...attachments, ...Array.from(files)]);
+      setAttachments([...attachments, ...Array.from(files).map(file => ({
+        id: Date.now().toString(),
+        filename: file.name,
+        url: URL.createObjectURL(file),
+        type: file.type,
+      }))]);
     }
     // Reset the input value so the same file can be selected again
     if (fileInputRef.current) {
@@ -233,7 +214,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
       fileInputRef.current.accept = type === 'image' ? 'image/*' : '.pdf,.doc,.docx,.txt';
       fileInputRef.current.click();
     }
-    setMenuAnchorEl(null);
+    setTemplateAnchorEl(null);
   };
 
   const formatMessageTime = (date: Date) => {
@@ -250,7 +231,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
   };
   
   const applyTemplate = (content: string) => {
-    setMessageText(content);
+    setNewMessage(content);
     closeTemplateMenu();
   };
 
@@ -283,7 +264,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
           backgroundColor: 'background.default',
         }}
       >
-        {loading ? (
+        {isLoading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
             <LoadingState message="Loading messages..." />
           </Box>
@@ -355,7 +336,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
                   <Typography variant="body1">{message.content}</Typography>
                   {message.attachments && message.attachments.length > 0 && (
                     <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {message.attachments.map((attachment) => (
+                      {message.attachments.map((attachment: Attachment) => (
                         <Tooltip key={attachment.id} title={attachment.filename}>
                           <Box
                             component="a"
@@ -413,7 +394,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
         {attachments.length > 0 && (
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, backgroundColor: 'background.paper' }}>
             {attachments.map((file, index) => (
-              <Tooltip key={index} title={file.name}>
+              <Tooltip key={index} title={file.filename}>
                 <Box
                   sx={{
                     display: 'flex',
@@ -430,7 +411,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
                     <FileIcon fontSize="small" color="primary" />
                   )}
                   <Typography variant="caption" sx={{ ml: 0.5, maxWidth: 100 }} noWrap>
-                    {file.name}
+                    {file.filename}
                   </Typography>
                   <IconButton
                     size="small"
@@ -451,7 +432,7 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
               onClick={openTemplateMenu}
               size="medium"
               sx={{ mr: 1 }}
-              disabled={loading || sendingMessage}
+              disabled={isLoading || isSending}
             >
               <TemplateIcon />
             </IconButton>
@@ -462,10 +443,10 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
             placeholder="Type a message..."
             multiline
             maxRows={4}
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyPress}
-            disabled={loading || sendingMessage}
+            disabled={isLoading || isSending}
             sx={{ mr: 1 }}
             error={!!error}
             helperText={error}
@@ -474,8 +455,8 @@ export function ChatWindow({ recipientId, recipientName, onMessageRead }: ChatWi
           <Button
             variant="contained"
             onClick={handleSendMessage}
-            disabled={(!messageText.trim() && attachments.length === 0) || loading || sendingMessage}
-            endIcon={sendingMessage ? <CircularProgress size={20} color="inherit" /> : null}
+            disabled={(!newMessage.trim() && attachments.length === 0) || isLoading || isSending}
+            endIcon={isSending ? <CircularProgress size={20} color="inherit" /> : null}
           >
             Send
           </Button>

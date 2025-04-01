@@ -190,4 +190,37 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Support
 
-For support, please open an issue in the GitHub repository or contact the development team at support@medivault.online. 
+For support, please open an issue in the GitHub repository or contact the development team at support@medivault.online.
+
+## Authentication and Security
+
+### Two-Factor Authentication (MFA)
+
+This application uses Clerk's built-in MFA capabilities for enhanced security:
+
+- **Implementation**: Leverages Clerk's native MFA features including email code verification
+- **Configuration**: Enable MFA for your Clerk application through the Clerk Dashboard
+- **Frontend Integration**: Custom MFA forms that work with Clerk's API
+- **User Flow**: 
+  1. User logs in with email/password
+  2. If MFA is enabled, they are prompted for a verification code
+  3. Code is verified directly using Clerk's API
+  4. On successful verification, the user is redirected to their dashboard
+
+### User Data Synchronization
+
+To maintain data consistency between Clerk and our database without requiring webhooks in development:
+
+- **Session-based Sync**: User data is synchronized on authenticated requests
+- **Explicit Sync API**: Frontend can trigger synchronization when needed
+- **Automatic Triggers**: Synchronization occurs after login, profile updates, etc.
+- **Production Ready**: Code structure supports adding webhooks for production 
+
+## Recent Changes
+
+### 2FA Implementation Migration
+
+- **Removed Custom 2FA Fields**: The database schema has been simplified by removing custom 2FA fields (`twoFactorEnabled` and `twoFactorSecret`).
+- **Clerk Native MFA**: Now exclusively using Clerk's built-in Multi-Factor Authentication capabilities.
+- **Simplified User Model**: User synchronization now focuses on core user data rather than duplicating authentication details.
+- **Enhanced Security**: By leveraging Clerk's trusted MFA implementation, we've improved security while reducing maintenance burden. 

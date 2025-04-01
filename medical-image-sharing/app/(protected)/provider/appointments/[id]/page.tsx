@@ -5,53 +5,40 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { Box, Typography, Container, Paper, Grid, Button, Chip } from '@mui/material';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'react-hot-toast';
-
-interface Appointment {
-  id: string;
-  scheduledFor: string;
-  status: 'scheduled' | 'completed' | 'cancelled';
-  notes: string;
-  patient: {
-    id: string;
-    name: string;
-    email: string;
-  };
-  image?: {
-    id: string;
-    url: string;
-    type: string;
-  };
-}
+import { providerClient } from '@/lib/api/providerClient';
+import { Appointment, AppointmentStatus } from '@/lib/api/types';
 
 export default function AppointmentDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const appointmentId = params.id as string;
+  const appointmentId = params?.id as string;
 
   const { data: appointment, isLoading } = useQuery<Appointment>({
     queryKey: ['appointment', appointmentId],
     queryFn: async () => {
-      const response = await fetch(`/api/appointments/${appointmentId}`);
-      if (!response.ok) throw new Error('Failed to fetch appointment');
-      return response.json();
+      if (!appointmentId) throw new Error('No appointment ID provided');
+      const response = await providerClient.getAppointments({ 
+        startDate: undefined, 
+        endDate: undefined 
+      });
+      const foundAppointment = response.data?.data?.find(apt => apt.id === appointmentId);
+      if (!foundAppointment) throw new Error('Failed to fetch appointment');
+      return foundAppointment;
     },
+    enabled: !!appointmentId
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (status: 'completed' | 'cancelled') => {
-      const response = await fetch(`/api/appointments/${appointmentId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-      if (!response.ok) throw new Error('Failed to update appointment');
-      return response.json();
+    mutationFn: async (status: AppointmentStatus) => {
+      const response = await providerClient.updateAppointment(appointmentId, { status });
+      if (response.status !== 'success') throw new Error('Failed to update appointment');
+      return response.data;
     },
     onSuccess: () => {
       toast.success('Appointment status updated successfully');
       router.refresh();
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error(error.message);
     },
   });
@@ -89,9 +76,9 @@ export default function AppointmentDetailPage() {
                 <Chip
                   label={appointment.status.toUpperCase()}
                   color={
-                    appointment.status === 'scheduled'
+                    appointment.status === AppointmentStatus.SCHEDULED
                       ? 'primary'
-                      : appointment.status === 'completed'
+                      : appointment.status === AppointmentStatus.COMPLETED
                       ? 'success'
                       : 'error'
                   }
@@ -103,8 +90,8 @@ export default function AppointmentDetailPage() {
                 <Typography variant="h6" gutterBottom>
                   Patient Information
                 </Typography>
-                <Typography>Name: {appointment.patient.name}</Typography>
-                <Typography>Email: {appointment.patient.email}</Typography>
+                <Typography>Name: {appointment.patient?.name || 'N/A'}</Typography>
+                <Typography>Email: {appointment.patient?.email || 'N/A'}</Typography>
               </Grid>
 
               <Grid item xs={12} md={6}>
@@ -117,7 +104,7 @@ export default function AppointmentDetailPage() {
                 <Typography>
                   Time: {new Date(appointment.scheduledFor).toLocaleTimeString()}
                 </Typography>
-                <Typography>Notes: {appointment.notes}</Typography>
+                <Typography>Notes: {appointment.notes || 'No notes'}</Typography>
               </Grid>
 
               {appointment.image && (
@@ -130,20 +117,20 @@ export default function AppointmentDetailPage() {
                 </Grid>
               )}
 
-              {appointment.status === 'scheduled' && (
+              {appointment.status === AppointmentStatus.SCHEDULED && (
                 <Grid item xs={12}>
                   <Box display="flex" gap={2}>
                     <Button
                       variant="contained"
                       color="primary"
-                      onClick={() => updateMutation.mutate('completed')}
+                      onClick={() => updateMutation.mutate(AppointmentStatus.COMPLETED)}
                     >
                       Mark as Completed
                     </Button>
                     <Button
                       variant="outlined"
                       color="error"
-                      onClick={() => updateMutation.mutate('cancelled')}
+                      onClick={() => updateMutation.mutate(AppointmentStatus.CANCELLED)}
                     >
                       Cancel Appointment
                     </Button>

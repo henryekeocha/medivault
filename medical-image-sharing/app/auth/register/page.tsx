@@ -21,6 +21,11 @@ import {
   MenuItem,
   Grid,
   useTheme,
+  LinearProgress,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -28,264 +33,309 @@ import {
   Lock as LockIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
-  Check as CheckIcon,
   CheckCircle as CheckCircleIcon,
-  RadioButtonUnchecked as RadioButtonUncheckedIcon,
+  Error as ErrorIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
-import { useAuth } from '@/contexts/AuthContext';
 import { Role, ProviderSpecialty } from '@prisma/client';
 import { routes } from '@/config/routes';
 import type { Route } from 'next';
-import SocialLoginButtons from '@/components/auth/SocialLoginButtons'; 
-import { signIn } from 'next-auth/react';
+import SocialLoginButtons from '@/components/auth/SocialLoginButtons';
+import { useSignUp, useAuth, useClerk } from '@clerk/nextjs';
 
-// For password strength validation
-interface PasswordCriteria {
-  minLength: boolean;
-  hasUpperCase: boolean;
-  hasLowerCase: boolean;
-  hasNumber: boolean;
-  hasSpecialChar: boolean;
-}
+// Add password criteria type
+type PasswordCriteria = {
+  label: string;
+  regex: RegExp;
+  met: boolean;
+};
 
 export default function RegisterPage() {
+  const { signUp, isLoaded: isSignUpLoaded } = useSignUp();
+  const { isLoaded: isAuthLoaded, isSignedIn } = useAuth();
+  const { client: clerk } = useClerk();
+  const router = useRouter();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [role, setRole] = useState<Role>(Role.PATIENT);
-  const [specialty, setSpecialty] = useState<ProviderSpecialty | undefined>(undefined);
   const [showPassword, setShowPassword] = useState(false);
-  const [verificationCode, setVerificationCode] = useState('');
-  const [verifying, setVerifying] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  
-  // Password strength visualization
-  const [passwordCriteria, setPasswordCriteria] = useState<PasswordCriteria>({
-    minLength: false,
-    hasUpperCase: false,
-    hasLowerCase: false,
-    hasNumber: false,
-    hasSpecialChar: false,
-  });
-  
-  const { register, error: authError } = useAuth();
-  const router = useRouter();
-  const theme = useTheme();
-  
-  // Combine errors from context and local state
-  const error = localError || authError;
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [role, setRole] = useState<Role>(Role.PATIENT);
+  const [specialty, setSpecialty] = useState<ProviderSpecialty | ''>('');
+  const [passwordStrength, setPasswordStrength] = useState(0);
+  const [passwordCriteria, setPasswordCriteria] = useState<PasswordCriteria[]>([
+    { label: 'At least 8 characters', regex: /.{8,}/, met: false },
+    { label: 'Contains uppercase letter', regex: /[A-Z]/, met: false },
+    { label: 'Contains lowercase letter', regex: /[a-z]/, met: false },
+    { label: 'Contains number', regex: /[0-9]/, met: false },
+    { label: 'Contains special character', regex: /[!@#$%^&*(),.?":{}|<>]/, met: false },
+  ]);
 
-  // Update password strength check as user types
-  const handlePasswordChange = (value: string) => {
-    setPassword(value);
-    
-    // Update criteria
-    setPasswordCriteria({
-      minLength: value.length >= 8,
-      hasUpperCase: /[A-Z]/.test(value),
-      hasLowerCase: /[a-z]/.test(value),
-      hasNumber: /[0-9]/.test(value),
-      hasSpecialChar: /[^A-Za-z0-9]/.test(value),
-    });
-  };
-  
-  // Register with Next.js Auth
-  const handleRegister = async (e: React.FormEvent) => {
+  // Register with Clerk
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validation
-    if (!name || !email || !password || !confirmPassword) {
-      setLocalError('All fields are required');
-      return;
-    }
-    
-    if (password !== confirmPassword) {
-      setLocalError('Passwords do not match');
-      return;
-    }
-    
-    // Check password strength
-    const isPasswordStrong = 
-      passwordCriteria.minLength && 
-      passwordCriteria.hasUpperCase && 
-      passwordCriteria.hasLowerCase && 
-      passwordCriteria.hasNumber;
-    
-    if (!isPasswordStrong) {
-      setLocalError('Password does not meet strength requirements');
-      return;
-    }
-    
+    setError('');
     setIsSubmitting(true);
-    setLocalError(null);
-    
+
     try {
-      // Get the current hostname and port for the API call
-      const baseUrl = window.location.origin;
-      
-      // Call the API route for registration
-      const response = await fetch(`${baseUrl}/api/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name,
-          email,
-          password,
-          role,
-          ...(role === Role.PROVIDER && specialty ? { specialty } : {})
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        // Extract error information from the API response
-        const errorMsg = data.error || 'Registration failed';
-        throw new Error(errorMsg);
+      // Enhanced validation
+      if (!name || !email || !password || !confirmPassword) {
+        throw new Error('All fields are required');
       }
+
+      // Email format validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        throw new Error('Please enter a valid email address');
+      }
+
+      // Password validation
+      if (password.length < 8) {
+        throw new Error('Password must be at least 8 characters long');
+      }
+      if (!/[A-Z]/.test(password)) {
+        throw new Error('Password must contain at least one uppercase letter');
+      }
+      if (!/[a-z]/.test(password)) {
+        throw new Error('Password must contain at least one lowercase letter');
+      }
+      if (!/[0-9]/.test(password)) {
+        throw new Error('Password must contain at least one number');
+      }
+      if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+        throw new Error('Password must contain at least one special character');
+      }
+
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match');
+      }
+
+      // Name validation
+      const [firstName, lastName] = name.split(' ');
+      if (!firstName || !lastName) {
+        throw new Error('Please enter your full name (first and last name)');
+      }
+      if (firstName.length < 2 || lastName.length < 2) {
+        throw new Error('First and last names must be at least 2 characters long');
+      }
+
+      // Role validation
+      if (role === Role.PROVIDER && !specialty) {
+        throw new Error('Please select a specialty for healthcare providers');
+      }
+
+      if (!isSignUpLoaded || !signUp) {
+        throw new Error('Clerk is not loaded');
+      }
+
+      // Rate limiting check
+      const lastAttempt = localStorage.getItem('lastRegistrationAttempt');
+      if (lastAttempt) {
+        const timeSinceLastAttempt = Date.now() - parseInt(lastAttempt);
+        if (timeSinceLastAttempt < 5000) { // 5 seconds cooldown
+          throw new Error('Please wait a few seconds before trying again');
+        }
+      }
+
+      console.log('Starting sign up process...');
+      console.log('Selected role:', role);
+      console.log('Selected specialty:', specialty);
       
-      // Registration successful
-      setSuccessMessage('Account created successfully! You can now sign in.');
+      const signUpData = {
+        emailAddress: email,
+        password,
+        firstName,
+        lastName,
+        unsafeMetadata: {
+          role: role,
+          ...(role === Role.PROVIDER && { specialty })
+        }
+      };
       
-      // Redirect to login page after a delay
-      setTimeout(() => {
-        router.push(routes.auth.login as Route);
-      }, 3000);
+      console.log('Sign up data:', signUpData);
       
-    } catch (error: any) {
-      console.error('Registration error:', error);
+      const result = await signUp.create(signUpData);
       
-      // Handle common registration errors
-      if (error.message.includes('already exists')) {
-        setLocalError('An account with this email already exists');
+      console.log('Sign up result:', result);
+      console.log('User ID:', result.createdUserId);
+      console.log('Status:', result.status);
+
+      // Store registration attempt timestamp
+      localStorage.setItem('lastRegistrationAttempt', Date.now().toString());
+
+      if (result.status === "complete") {
+        if (result.createdUserId) {
+          try {
+            console.log('Registration complete, redirecting to verification');
+            
+            // The webhook will handle creating the user in our database
+            // Clear sensitive data from localStorage
+            localStorage.removeItem('lastRegistrationAttempt');
+            
+            // Store the role in localStorage for later retrieval after verification
+            localStorage.setItem('pendingUserRole', role);
+            if (role === Role.PROVIDER && specialty) {
+              localStorage.setItem('pendingUserSpecialty', specialty);
+            }
+            
+            // Redirect to verification page
+            router.push('/auth/verify-email');
+          } catch (error) {
+            console.error('Error during registration:', error);
+            // Clear sensitive data from localStorage
+            localStorage.removeItem('lastRegistrationAttempt');
+            // Still redirect to verification page
+            router.push('/auth/verify-email');
+          }
+        }
+      } else if (result.status === "missing_requirements") {
+        // Handle email verification
+        await signUp.prepareEmailAddressVerification({
+          strategy: "email_code"
+        });
+        
+        console.log('Registration requires verification, redirecting');
+        
+        // Store the role in localStorage for later retrieval after verification
+        localStorage.setItem('pendingUserRole', role);
+        if (role === Role.PROVIDER && specialty) {
+          localStorage.setItem('pendingUserSpecialty', specialty);
+        }
+        
+        // Redirect to verification page
+        router.push('/auth/verify-email');
       } else {
-        setLocalError(error.message || 'Registration failed');
+        throw new Error('Sign up failed. Please try again.');
       }
+    } catch (err) {
+      console.error('Registration error:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred during registration');
     } finally {
       setIsSubmitting(false);
     }
   };
-  
-  const handleSocialLoginSuccess = () => {
-    router.push(routes.root.home as Route);
-  };
-  
-  const handleSocialLoginError = (error: string) => {
-    setLocalError(`Social login error: ${error}`);
+
+  // Add password strength calculation
+  const calculatePasswordStrength = (password: string) => {
+    let strength = 0;
+    const criteria = passwordCriteria.map(criterion => {
+      const met = criterion.regex.test(password);
+      if (met) strength += 20;
+      return { ...criterion, met };
+    });
+    setPasswordCriteria(criteria);
+    setPasswordStrength(strength);
   };
 
+  // Update password handler
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newPassword = e.target.value;
+    setPassword(newPassword);
+    calculatePasswordStrength(newPassword);
+  };
+
+  // Handle social login success
+  const handleSocialLoginSuccess = () => {
+    router.push('/dashboard');
+  };
+
+  // Handle social login error
+  const handleSocialLoginError = (error: string) => {
+    setError(error);
+  };
+
+  // If user is already signed in, redirect to dashboard
+  useEffect(() => {
+    if (isSignedIn) {
+      router.push('/dashboard');
+    }
+  }, [isSignedIn, router]);
+
+  // Show loading state while Clerk is initializing
+  if (!isSignUpLoaded || !isAuthLoaded) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
   return (
-    <Container component="main" maxWidth="sm" sx={{ pt: 8, pb: 4 }}>
-      <Paper 
-        elevation={3} 
-        sx={{ 
-          p: 4, 
-          display: 'flex', 
-          flexDirection: 'column', 
-          alignItems: 'center',
-          borderRadius: 2,
-        }}
-      >
-        <Typography component="h1" variant="h4" sx={{ mb: 2 }}>
-          Create an Account
-        </Typography>
-        
-        {error && (
-          <Alert 
-            severity="error" 
-            sx={{ width: '100%', mb: 2 }}
-          >
-            {error}
-          </Alert>
-        )}
-        
-        {successMessage && (
-          <Alert 
-            severity="success" 
-            sx={{ width: '100%', mb: 2 }}
-          >
-            {successMessage}
-          </Alert>
-        )}
-        
-        {!verifying ? (
-          // Registration Form
-          <Box 
-            component="form" 
-            onSubmit={handleRegister}
-            sx={{ width: '100%', mt: 1 }}
-          >
+    <Container maxWidth="sm">
+      <Box sx={{ mt: 8, mb: 4 }}>
+        <Paper elevation={3} sx={{ p: 4 }}>
+          <Typography variant="h4" component="h1" gutterBottom align="center">
+            Create an Account
+          </Typography>
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+
+          {successMessage && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              {successMessage}
+            </Alert>
+          )}
+
+          <Box component="form" onSubmit={handleSubmit}>
             <TextField
-              variant="outlined"
-              margin="normal"
-              required
               fullWidth
-              id="name"
               label="Full Name"
-              name="name"
-              autoComplete="name"
-              autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PersonIcon color="action" />
-                  </InputAdornment>
-                ),
-              }}
-              disabled={isSubmitting}
-            />
-            
-            <TextField
-              variant="outlined"
               margin="normal"
               required
-              fullWidth
-              id="email"
-              label="Email Address"
-              name="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              disabled={isSubmitting}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <EmailIcon color="action" />
+                    <PersonIcon />
                   </InputAdornment>
                 ),
               }}
-              disabled={isSubmitting}
             />
-            
+
             <TextField
-              variant="outlined"
+              fullWidth
+              label="Email Address"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              margin="normal"
+              required
+              disabled={isSubmitting}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <EmailIcon />
+                  </InputAdornment>
+                ),
+              }}
+            />
+
+            <TextField
               margin="normal"
               required
               fullWidth
               name="password"
               label="Password"
-              type={showPassword ? 'text' : 'password'}
+              type={showPassword ? "text" : "password"}
               id="password"
               autoComplete="new-password"
               value={password}
-              onChange={(e) => handlePasswordChange(e.target.value)}
+              onChange={handlePasswordChange}
+              disabled={isSubmitting}
               InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockIcon color="action" />
-                  </InputAdornment>
-                ),
                 endAdornment: (
                   <InputAdornment position="end">
                     <IconButton
-                      aria-label="toggle password visibility"
                       onClick={() => setShowPassword(!showPassword)}
                       edge="end"
                     >
@@ -294,196 +344,153 @@ export default function RegisterPage() {
                   </InputAdornment>
                 ),
               }}
-              disabled={isSubmitting}
             />
-            
+
             {/* Password Strength Indicator */}
             <Box sx={{ mt: 1, mb: 2 }}>
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                Password Requirements:
+              <LinearProgress 
+                variant="determinate" 
+                value={passwordStrength} 
+                sx={{ 
+                  height: 8, 
+                  borderRadius: 4,
+                  backgroundColor: '#e0e0e0',
+                  '& .MuiLinearProgress-bar': {
+                    backgroundColor: passwordStrength === 100 ? '#4caf50' : 
+                                   passwordStrength >= 60 ? '#2196f3' : 
+                                   passwordStrength >= 40 ? '#ff9800' : '#f44336',
+                  }
+                }} 
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                Password Strength: {passwordStrength === 100 ? 'Strong' : 
+                                  passwordStrength >= 60 ? 'Good' : 
+                                  passwordStrength >= 40 ? 'Fair' : 'Weak'}
               </Typography>
-              <Grid container spacing={1}>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {passwordCriteria.minLength ? (
-                      <CheckCircleIcon color="success" fontSize="small" sx={{ mr: 1 }} />
-                    ) : (
-                      <RadioButtonUncheckedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
-                    )}
-                    <Typography variant="body2" color={passwordCriteria.minLength ? 'success.main' : 'text.secondary'}>
-                      At least 8 characters
-                    </Typography>
-                  </Box>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {passwordCriteria.hasUpperCase ? (
-                      <CheckCircleIcon color="success" fontSize="small" sx={{ mr: 1 }} />
-                    ) : (
-                      <RadioButtonUncheckedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
-                    )}
-                    <Typography variant="body2" color={passwordCriteria.hasUpperCase ? 'success.main' : 'text.secondary'}>
-                      One uppercase letter
-                    </Typography>
-                  </Box>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {passwordCriteria.hasLowerCase ? (
-                      <CheckCircleIcon color="success" fontSize="small" sx={{ mr: 1 }} />
-                    ) : (
-                      <RadioButtonUncheckedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
-                    )}
-                    <Typography variant="body2" color={passwordCriteria.hasLowerCase ? 'success.main' : 'text.secondary'}>
-                      One lowercase letter
-                    </Typography>
-                  </Box>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {passwordCriteria.hasNumber ? (
-                      <CheckCircleIcon color="success" fontSize="small" sx={{ mr: 1 }} />
-                    ) : (
-                      <RadioButtonUncheckedIcon color="disabled" fontSize="small" sx={{ mr: 1 }} />
-                    )}
-                    <Typography variant="body2" color={passwordCriteria.hasNumber ? 'success.main' : 'text.secondary'}>
-                      One number
-                    </Typography>
-                  </Box>
-                </Grid>
-              </Grid>
             </Box>
-            
+
+            {/* Password Criteria List */}
+            <List dense sx={{ mb: 2 }}>
+              {passwordCriteria.map((criterion, index) => (
+                <ListItem key={index}>
+                  <ListItemIcon>
+                    {criterion.met ? (
+                      <CheckCircleIcon color="success" />
+                    ) : (
+                      <ErrorIcon color="error" />
+                    )}
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary={criterion.label}
+                    sx={{
+                      color: criterion.met ? 'success.main' : 'text.secondary',
+                      '& .MuiListItemText-primary': {
+                        fontSize: '0.875rem',
+                      }
+                    }}
+                  />
+                </ListItem>
+              ))}
+            </List>
+
             <TextField
-              variant="outlined"
-              margin="normal"
-              required
               fullWidth
-              name="confirmPassword"
               label="Confirm Password"
-              type={showPassword ? 'text' : 'password'}
-              id="confirmPassword"
-              autoComplete="new-password"
+              type={showConfirmPassword ? 'text' : 'password'}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
+              margin="normal"
+              required
+              disabled={isSubmitting}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <LockIcon color="action" />
+                    <LockIcon />
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      edge="end"
+                    >
+                      {showConfirmPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                    </IconButton>
                   </InputAdornment>
                 ),
               }}
-              disabled={isSubmitting}
-              error={password !== confirmPassword && confirmPassword !== ''}
-              helperText={password !== confirmPassword && confirmPassword !== '' ? 'Passwords do not match' : ''}
             />
-            
+
             <FormControl fullWidth margin="normal">
-              <InputLabel id="role-select-label">Role</InputLabel>
+              <InputLabel>Role</InputLabel>
               <Select
-                labelId="role-select-label"
-                id="role-select"
                 value={role}
-                label="Role"
                 onChange={(e) => setRole(e.target.value as Role)}
+                label="Role"
                 disabled={isSubmitting}
               >
                 <MenuItem value={Role.PATIENT}>Patient</MenuItem>
                 <MenuItem value={Role.PROVIDER}>Healthcare Provider</MenuItem>
+                <MenuItem value={Role.ADMIN}>Administrator</MenuItem>
               </Select>
             </FormControl>
-            
+
             {role === Role.PROVIDER && (
               <FormControl fullWidth margin="normal">
-                <InputLabel id="specialty-select-label">Specialty</InputLabel>
+                <InputLabel>Specialty</InputLabel>
                 <Select
-                  labelId="specialty-select-label"
-                  id="specialty-select"
-                  value={specialty || ''}
-                  label="Specialty"
+                  value={specialty}
                   onChange={(e) => setSpecialty(e.target.value as ProviderSpecialty)}
+                  label="Specialty"
                   disabled={isSubmitting}
                 >
                   {Object.values(ProviderSpecialty).map((specialty) => (
                     <MenuItem key={specialty} value={specialty}>
-                      {specialty}
+                      {specialty.replace(/_/g, ' ')}
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
             )}
-            
+
             <Button
-              type="submit"
               fullWidth
+              type="submit"
               variant="contained"
+              color="primary"
               size="large"
-              sx={{ mt: 3, mb: 2, py: 1.2 }}
               disabled={isSubmitting}
+              sx={{ mt: 3, mb: 2, py: 1.5 }}
+              startIcon={isSubmitting ? <CircularProgress size={20} color="inherit" /> : null}
             >
-              {isSubmitting ? (
-                <CircularProgress size={24} color="inherit" />
-              ) : (
-                'Sign Up'
-              )}
+              {isSubmitting ? 'Creating Account...' : 'Create Account'}
             </Button>
-            
-            <SocialLoginButtons 
+
+            {/* Add clerk-captcha element for CAPTCHA validation */}
+            <div id="clerk-captcha" style={{ marginTop: '10px' }}></div>
+
+            <Divider sx={{ my: 2 }}>or</Divider>
+
+            <SocialLoginButtons
               onSuccess={handleSocialLoginSuccess}
               onError={handleSocialLoginError}
             />
-            
+
             <Box sx={{ mt: 2, textAlign: 'center' }}>
-              <Link href={routes.auth.login as Route} passHref legacyBehavior>
-                <MuiLink variant="body2" component="span">
-                  Already have an account? Sign In
+              <Typography variant="body1">
+                Already have an account?{' '}
+                <MuiLink
+                  component={Link}
+                  href={routes.root.login as Route}
+                  underline="hover"
+                >
+                  Sign In
                 </MuiLink>
-              </Link>
+              </Typography>
             </Box>
           </Box>
-        ) : (
-          // Verification Form (only shown if needed for email verification)
-          <Box 
-            component="div" 
-            sx={{ width: '100%', mt: 1 }}
-          >
-            <Typography variant="body1" gutterBottom>
-              We've sent a verification code to your email. Please enter it below to complete your registration.
-            </Typography>
-            
-            <TextField
-              variant="outlined"
-              margin="normal"
-              required
-              fullWidth
-              id="verificationCode"
-              label="Verification Code"
-              name="verificationCode"
-              autoComplete="one-time-code"
-              autoFocus
-              value={verificationCode}
-              onChange={(e) => setVerificationCode(e.target.value)}
-              disabled={isSubmitting}
-            />
-            
-            <Button
-              type="button"
-              fullWidth
-              variant="contained"
-              size="large"
-              sx={{ mt: 3, mb: 2, py: 1.2 }}
-              disabled={isSubmitting}
-              onClick={() => router.push(routes.auth.login as Route)}
-            >
-              {isSubmitting ? (
-                <CircularProgress size={24} color="inherit" />
-              ) : (
-                'Continue to Login'
-              )}
-            </Button>
-          </Box>
-        )}
-      </Paper>
+        </Paper>
+      </Box>
     </Container>
   );
 } 

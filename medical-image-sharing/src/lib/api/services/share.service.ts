@@ -1,24 +1,45 @@
-import { ApiClient } from '../client';
-import type { ApiResponse, Share, PaginatedResponse } from '../types';
+import { patientClient } from '../patientClient';
+import { providerClient } from '../providerClient';
+import type { ApiResponse, Share, PaginatedResponse, Image } from '../types';
 import { ShareType, SharePermission } from '@prisma/client';
 
 export class ShareService {
-  private static instance: ShareService;
-  private client: ApiClient;
+  private patientClient;
+  private providerClient;
+  private userRole: 'PATIENT' | 'PROVIDER' | null = null;
 
-  private constructor() {
-    this.client = ApiClient.getInstance();
+  constructor() {
+    this.patientClient = patientClient;
+    this.providerClient = providerClient;
   }
 
-  public static getInstance(): ShareService {
-    if (!ShareService.instance) {
-      ShareService.instance = new ShareService();
+  setUserRole(role: 'PATIENT' | 'PROVIDER') {
+    this.userRole = role;
+  }
+
+  private getClient() {
+    if (!this.userRole) {
+      throw new Error('User role not set. Call setUserRole first.');
     }
-    return ShareService.instance;
+    return this.userRole === 'PATIENT' ? this.patientClient : this.providerClient;
   }
 
-  async createShare(data: Partial<Share>): Promise<ApiResponse<Share>> {
-    return this.client.createShare(data);
+  async createShare(data: {
+    imageId: string;
+    recipientId: string;
+    expiryDays?: number;
+    allowDownload?: boolean;
+  }): Promise<ApiResponse<void>> {
+    if (this.userRole === 'PATIENT') {
+      return this.patientClient.shareImage({
+        providerId: data.recipientId,
+        imageId: data.imageId,
+        expiryDays: data.expiryDays || 30,
+        allowDownload: data.allowDownload || true
+      });
+    } else {
+      return this.providerClient.shareImage(data.imageId, data.recipientId);
+    }
   }
 
   async getShares(params?: {
@@ -28,16 +49,23 @@ export class ShareService {
     status?: string;
     page?: number;
     limit?: number;
-  }): Promise<ApiResponse<PaginatedResponse<Share>>> {
-    return this.client.getShares(params);
+  }): Promise<ApiResponse<Image[]>> {
+    if (this.userRole === 'PATIENT') {
+      return this.patientClient.getSharedImages();
+    } else {
+      return this.providerClient.getImages({ 
+        ...params,
+        patientId: params?.userId 
+      });
+    }
   }
 
   async updateShare(id: string, data: Partial<Share>): Promise<ApiResponse<Share>> {
-    return this.client.updateShare(id, data);
+    throw new Error('Update share operation not supported in new API structure');
   }
 
-  async deleteShare(id: string): Promise<ApiResponse<void>> {
-    return this.client.deleteShare(id);
+  async deleteShare(shareId: string): Promise<ApiResponse<void>> {
+    return this.getClient().revokeImageAccess(shareId, shareId);
   }
 
   getShareUrl(share: Share): string {
@@ -63,4 +91,6 @@ export class ShareService {
   canShare(share: Share): boolean {
     return share.permissions === SharePermission.FULL;
   }
-} 
+}
+
+export const shareService = new ShareService(); 

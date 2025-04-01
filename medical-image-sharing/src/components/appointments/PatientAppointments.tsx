@@ -26,7 +26,8 @@ import {
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, parseISO, isAfter } from 'date-fns';
-import { apiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
+import { providerClient } from '@/lib/api/providerClient';
 import { AppointmentStatus, ProviderSpecialty } from '@prisma/client';
 import { Appointment, AppointmentResponse, UpdateAppointmentRequest, User } from '@/lib/api/types';
 import { toast } from 'react-hot-toast';
@@ -57,10 +58,18 @@ export const PatientAppointments: React.FC<PatientAppointmentsProps> = ({ onBook
   const { data: appointmentsResponse, isLoading, error } = useQuery({
     queryKey: ['appointments'] as const,
     queryFn: async () => {
-      const response = await apiClient.getAppointments({ 
+      // Get the user's profile to get their ID
+      const profileResponse = await patientClient.getUserProfile();
+      if (profileResponse.status !== 'success' || !profileResponse.data?.id) {
+        throw new Error('Failed to get user profile');
+      }
+
+      // Get all appointments for the patient
+      const response = await providerClient.getPatientAppointments(profileResponse.data.id, {
         startDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString(),
         endDate: new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
       });
+
       return response.data;
     }
   });
@@ -68,7 +77,7 @@ export const PatientAppointments: React.FC<PatientAppointmentsProps> = ({ onBook
   // Cancel appointment mutation
   const cancelAppointment = useMutation({
     mutationFn: (appointmentId: string) => 
-      apiClient.updateAppointment(appointmentId, { status: AppointmentStatus.CANCELLED }),
+      patientClient.updateAppointment(appointmentId, { status: AppointmentStatus.CANCELLED }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
       toast.success('Appointment cancelled successfully');
@@ -265,12 +274,12 @@ export const PatientAppointments: React.FC<PatientAppointmentsProps> = ({ onBook
     );
   }
 
-  const appointments = appointmentsResponse?.data || appointmentsResponse?.items || [];
+  const appointments = appointmentsResponse?.data || [];
   const upcomingAppointments = appointments.filter(
-    (apt) => apt.status === AppointmentStatus.SCHEDULED && !isAfter(new Date(), new Date(apt.scheduledFor))
+    (apt: Appointment) => apt.status === AppointmentStatus.SCHEDULED && !isAfter(new Date(), new Date(apt.scheduledFor))
   );
   const pastAppointments = appointments.filter(
-    (apt) => apt.status !== AppointmentStatus.SCHEDULED || isAfter(new Date(), new Date(apt.scheduledFor))
+    (apt: Appointment) => apt.status !== AppointmentStatus.SCHEDULED || isAfter(new Date(), new Date(apt.scheduledFor))
   );
 
   return (

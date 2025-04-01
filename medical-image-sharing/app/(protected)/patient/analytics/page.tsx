@@ -29,7 +29,7 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { apiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
 import { useToast } from '@/hooks/useToast';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
@@ -103,36 +103,50 @@ export default function PatientAnalytics() {
 
   // Define a function for fetching analytics that returns a Promise
   const fetchAnalytics = async () => {
-    // Use withErrorHandling to wrap the API call
+    // Use withErrorHandling to wrap the API calls
     return withErrorHandling(async () => {
-      const response = await apiClient.getPatientAnalytics();
+      // Fetch all analytics data in parallel
+      const [analyticsResponse, imageTypesResponse, statsResponse] = await Promise.all([
+        patientClient.getPatientAnalytics(),
+        patientClient.getPatientImageTypeDistribution(),
+        patientClient.getPatientStats()
+      ]);
       
-      if (response.status === 'success') {
-        const { data } = response;
+      if (analyticsResponse.status === 'success' && 
+          imageTypesResponse.status === 'success' && 
+          statsResponse.status === 'success') {
+        
+        const analytics = analyticsResponse.data;
+        const imageTypes = imageTypesResponse.data;
+        const stats = statsResponse.data;
         
         // Update stats
         setStats([
-          { title: 'Total Images', value: data.totalImages.toString() },
-          { title: 'Active Providers', value: data.activeProviders.toString() },
-          { title: 'Storage Used', value: data.storageUsed },
-          { title: 'Last Upload', value: data.lastUpload || 'N/A' },
+          { title: 'Total Images', value: stats.totalImages?.toString() || '0' },
+          { title: 'Active Providers', value: stats.activeProviders?.toString() || '0' },
+          { title: 'Storage Used', value: stats.storageUsed || '0 MB' },
+          { title: 'Last Upload', value: stats.lastUpload || 'N/A' },
         ]);
         
         // Update chart data
-        setImageHistoryData(data.imageHistory || []);
-        setImageTypeData(data.imageTypes || []);
-        setProviderInteractionData(data.providerInteractions || []);
+        setImageHistoryData(analytics.imageHistory || []);
+        setImageTypeData(imageTypes.types || []);
+        setProviderInteractionData(analytics.providerInteractions || []);
         
-        return data;
+        return { analytics, imageTypes, stats };
       } else {
-        throw new Error(response.error?.message || 'Failed to load analytics data');
+        throw new Error(
+          analyticsResponse.error?.message || 
+          imageTypesResponse.error?.message || 
+          statsResponse.error?.message || 
+          'Failed to load analytics data'
+        );
       }
     }, { showToast: true, successMessage: 'Analytics data loaded successfully' });
   };
 
   // Call fetchAnalytics in useEffect with proper handling
   useEffect(() => {
-    // Create a function to call fetchAnalytics to avoid React warning about async function in useEffect
     fetchAnalytics().catch((error: Error) => {
       console.error('Error loading analytics data:', error);
     });

@@ -3,7 +3,7 @@ import { Paper, Typography, Box, Skeleton, FormControl, InputLabel, MenuItem, Se
 import { useTheme } from '@mui/material/styles';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { HealthMetricResponse } from '@/lib/api/types';
-import { ApiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
@@ -62,10 +62,10 @@ const HealthMetricsChart: React.FC<HealthMetricsChartProps> = ({ title, patientI
 
   // Fetch health metrics data
   useEffect(() => {
-    if (patientId) {
+    if (patientId && !loading) {
       fetchHealthMetrics();
     }
-  }, [patientId, selectedMetricType]);
+  }, [patientId, selectedMetricType, loading]);
 
   const fetchHealthMetrics = async () => {
     if (!patientId) return;
@@ -74,18 +74,14 @@ const HealthMetricsChart: React.FC<HealthMetricsChartProps> = ({ title, patientI
       setIsLoading(true);
       clearErrors();
       
-      const apiClient = ApiClient.getInstance();
-      // Remove the 'type' parameter since it's not supported by the API
-      const response = await apiClient.getHealthMetrics({ 
-        patientId, 
-        // Get last 30 days of data
+      const response = await patientClient.getHealthMetrics({ 
         startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
         endDate: new Date().toISOString()
       });
       
       if (response.status === 'success') {
         // Filter metrics by the selected type
-        const filteredMetrics = (response.data || []).filter(
+        const filteredMetrics = (response.data.data || []).filter(
           (metric: HealthMetricResponse) => metric.type === selectedMetricType
         );
         setMetrics(filteredMetrics);
@@ -98,17 +94,13 @@ const HealthMetricsChart: React.FC<HealthMetricsChartProps> = ({ title, patientI
         }));
         
         // Sort by timestamp and remove the timestamp property
-        formattedData.sort((a: ChartDataPoint, b: ChartDataPoint) => 
-          (a.timestamp || 0) - (b.timestamp || 0)
-        );
-        
-        // Keep the timestamp property in the chart data
-        setChartData(formattedData);
+        const sortedData = formattedData.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        setChartData(sortedData.map(({ timestamp, ...rest }) => rest));
       } else {
-        throw new Error(response.error?.message || 'Failed to load health metrics');
+        throw new Error(response.error?.message || 'Failed to fetch health metrics');
       }
-    } catch (error) {
-      handleError(error as Error);
+    } catch (err) {
+      handleError(err);
     } finally {
       setIsLoading(false);
     }
@@ -137,7 +129,7 @@ const HealthMetricsChart: React.FC<HealthMetricsChartProps> = ({ title, patientI
             value={selectedMetricType}
             onChange={(e) => setSelectedMetricType(e.target.value)}
             label="Metric Type"
-            disabled={isLoading}
+            disabled={isLoading || loading}
           >
             {Object.entries(metricTypes).map(([key, { label }]) => (
               <MenuItem key={key} value={key}>
@@ -167,7 +159,7 @@ const HealthMetricsChart: React.FC<HealthMetricsChartProps> = ({ title, patientI
         </Alert>
       )}
 
-      {isLoading ? (
+      {loading || isLoading ? (
         <SimpleLoadingState height={300} />
       ) : chartData.length > 0 ? (
         <Box sx={{ height: 300, flex: 1 }}>

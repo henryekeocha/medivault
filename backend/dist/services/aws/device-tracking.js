@@ -1,4 +1,4 @@
-import { prisma } from '../../lib/prisma.js';
+import prisma from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 /**
  * Service for tracking and managing user devices using the database

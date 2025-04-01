@@ -30,7 +30,7 @@ import {
 } from '@mui/icons-material';
 import { Image, Share } from '@/lib/api/types';
 import { SharePermission } from '@prisma/client';
-import { apiClient } from '@/lib/api/client';
+import { sharedClient } from '@/lib/api';
 
 interface SecureShareModalProps {
   open: boolean;
@@ -83,6 +83,9 @@ export const SecureShareModal: React.FC<SecureShareModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Parse metadata from string
+  const metadata = image.metadata ? JSON.parse(image.metadata) : null;
+
   const handleGenerateLink = async () => {
     if (shareOptions.sendEmail && !shareOptions.recipientEmail) {
       setError('Recipient email is required when email sharing is enabled');
@@ -97,7 +100,7 @@ export const SecureShareModal: React.FC<SecureShareModalProps> = ({
     try {
       setLoading(true);
       setError('');
-      const response = await apiClient.createShare({
+      const response = await sharedClient.createShare({
         imageId: image.id,
         type: 'LINK',
         permissions: SharePermission.VIEW,
@@ -169,10 +172,10 @@ export const SecureShareModal: React.FC<SecureShareModalProps> = ({
             Filename: {image.filename}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Patient ID: {image.metadata?.patientId || 'Unknown'}
+            Patient ID: {metadata?.patientId || 'Unknown'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Type: {image.metadata?.scanType || 'Unknown'}
+            Type: {metadata?.scanType || 'Unknown'}
           </Typography>
         </Box>
 

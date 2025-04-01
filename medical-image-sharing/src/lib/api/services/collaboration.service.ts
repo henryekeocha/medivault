@@ -1,13 +1,19 @@
 import { WebSocketService } from './websocket.service';
-import { apiClient } from '../client';
+import { patientClient } from '../patientClient';
+import { providerClient } from '../providerClient';
 import type { Annotation, Image, ApiResponse } from '../types';
 
 export class CollaborationService {
   private static instance: CollaborationService;
   private wsService: WebSocketService;
+  private patientClient;
+  private providerClient;
+  private userRole: 'PATIENT' | 'PROVIDER' | null = null;
 
-  private constructor() {
+  constructor() {
     this.wsService = WebSocketService.getInstance();
+    this.patientClient = patientClient;
+    this.providerClient = providerClient;
   }
 
   public static getInstance(): CollaborationService {
@@ -15,6 +21,17 @@ export class CollaborationService {
       CollaborationService.instance = new CollaborationService();
     }
     return CollaborationService.instance;
+  }
+
+  setUserRole(role: 'PATIENT' | 'PROVIDER') {
+    this.userRole = role;
+  }
+
+  private getClient() {
+    if (!this.userRole) {
+      throw new Error('User role not set. Call setUserRole first.');
+    }
+    return this.userRole === 'PATIENT' ? this.patientClient : this.providerClient;
   }
 
   // Join a collaboration session for an image
@@ -67,15 +84,15 @@ export class CollaborationService {
   }
 
   // Save annotations to the server
-  async saveAnnotations(imageId: string, annotations: Annotation[]): Promise<void> {
-    await apiClient.post(`/images/${imageId}/annotations`, { annotations });
+  async saveAnnotations(imageId: string, annotations: Annotation[]): Promise<ApiResponse<void>> {
+    return this.getClient().saveAnnotations(imageId, annotations);
   }
 
   // Load annotations from the server
   async loadAnnotations(imageId: string): Promise<Annotation[]> {
     try {
-      const response = await apiClient.get<ApiResponse<Annotation[]>>(`/images/${imageId}/annotations`);
-      return response.data || [];
+      const response = await this.getClient().getAnnotations(imageId);
+      return response.data.data || [];
     } catch (error) {
       console.error('Error loading annotations:', error);
       return [];
@@ -106,7 +123,7 @@ export class CollaborationService {
   // Get active collaborators
   async getCollaborators(imageId: string): Promise<string[]> {
     try {
-      const response = await apiClient.get<ApiResponse<string[]>>(`/images/${imageId}/collaborators`);
+      const response = await this.getClient().getImageCollaborators(imageId);
       return response.data || [];
     } catch (error) {
       console.error('Error getting collaborators:', error);
@@ -120,7 +137,7 @@ export class CollaborationService {
     annotationId: string
   ): Promise<boolean> {
     try {
-      await apiClient.post(`/images/${imageId}/annotations/${annotationId}/lock`);
+      await this.getClient().lockAnnotation(imageId, annotationId);
       return true;
     } catch (error) {
       return false;
@@ -132,9 +149,7 @@ export class CollaborationService {
     imageId: string,
     annotationId: string
   ): Promise<void> {
-    await apiClient.delete(
-      `/images/${imageId}/annotations/${annotationId}/lock`
-    );
+    await this.getClient().releaseAnnotationLock(imageId, annotationId);
   }
 
   // Check if an annotation is locked
@@ -143,13 +158,12 @@ export class CollaborationService {
     annotationId: string
   ): Promise<boolean> {
     try {
-      const response = await apiClient.get<ApiResponse<{ locked: boolean }>>(
-        `/images/${imageId}/annotations/${annotationId}/lock`
-      );
-      
+      const response = await this.getClient().getAnnotationLockStatus(imageId, annotationId);
       return response.data?.locked || false;
     } catch (error) {
       return false;
     }
   }
-} 
+}
+
+export const collaborationService = new CollaborationService(); 

@@ -1,5 +1,7 @@
-import { ApiClient } from '../client';
-import type { ApiResponse, Image, PaginatedResponse, DicomMetadata } from '../types';
+import { patientClient } from '../patientClient';
+import { providerClient } from '../providerClient';
+import { adminClient } from '../adminClient';
+import { ApiResponse, Image, PaginatedResponse, DicomMetadata, SharedImage } from '../types';
 
 // Using local enums because of import issues with prisma
 enum ImageStatus {
@@ -16,39 +18,41 @@ enum ImageType {
   OTHER = 'OTHER'
 }
 
-// Use the local type definition
-type AxiosProgressEvent = {
-  loaded: number;
-  total?: number;
-  progress?: number;
-  bytes: number;
-  estimated?: number;
-  rate?: number;
-  upload?: boolean;
-};
-
-// DICOM is the only supported content type
-const DICOM_CONTENT_TYPE = 'application/dicom';
-const DICOM_EXTENSION = '.dcm';
-
 // Extended Image type with our custom properties
 interface DicomImage extends Image {
   fileExtension?: string;
 }
 
 export class ImageService {
-  private static instance: ImageService;
-  private client: ApiClient;
+  private patientClient;
+  private providerClient;
+  private adminClient;
+  private userRole: 'PATIENT' | 'PROVIDER' | 'ADMIN' | null = null;
 
-  private constructor() {
-    this.client = ApiClient.getInstance();
+  constructor() {
+    this.patientClient = patientClient;
+    this.providerClient = providerClient;
+    this.adminClient = adminClient;
   }
 
-  public static getInstance(): ImageService {
-    if (!ImageService.instance) {
-      ImageService.instance = new ImageService();
+  setUserRole(role: 'PATIENT' | 'PROVIDER' | 'ADMIN') {
+    this.userRole = role;
+  }
+
+  private getClient() {
+    if (!this.userRole) {
+      throw new Error('User role not set. Call setUserRole first.');
     }
-    return ImageService.instance;
+    switch (this.userRole) {
+      case 'PATIENT':
+        return this.patientClient;
+      case 'PROVIDER':
+        return this.providerClient;
+      case 'ADMIN':
+        return this.adminClient;
+      default:
+        throw new Error(`Invalid user role: ${this.userRole}`);
+    }
   }
 
   /**
@@ -58,87 +62,69 @@ export class ImageService {
    * @param onProgress Progress callback for upload
    * @returns Uploaded image information
    */
-  async uploadImage(
-    file: File,
-    metadata: Partial<Image>,
-    onProgress?: (progressEvent: AxiosProgressEvent) => void
-  ): Promise<ApiResponse<Image>> {
-    // Ensure we're uploading a DICOM file
-    let fileToUpload = file;
-    if (!file.name.toLowerCase().endsWith(DICOM_EXTENSION) && file.type !== DICOM_CONTENT_TYPE) {
-      // If not a .dcm file, we rename it and set the DICOM content type
-      const renamedFile = new File([file], `${file.name}${DICOM_EXTENSION}`, { 
-        type: DICOM_CONTENT_TYPE
-      });
-      fileToUpload = renamedFile;
+  async uploadImage(file: File, metadata?: Record<string, any>, onProgress?: (progress: number) => void): Promise<ApiResponse<Image>> {
+    return this.getClient().uploadImage(file, metadata, onProgress);
+  }
+
+  async getImages(params?: { 
+    page?: number; 
+    limit?: number;
+    patientId?: string;
+  }): Promise<ApiResponse<PaginatedResponse<Image> | Image[]>> {
+    try {
+      return await this.getClient().getImages(params);
+    } catch (error) {
+      console.error('Error fetching images in image service:', error);
+      // Return a default empty response instead of throwing the error
+      return {
+        status: 'success',
+        data: {
+          data: [],
+          pagination: {
+            page: params?.page || 1,
+            limit: params?.limit || 20,
+            total: 0,
+            pages: 0
+          }
+        } as PaginatedResponse<Image>
+      };
     }
-    
-    // Set DICOM-specific metadata
-    const dicomMetadata: Partial<Image> = {
-      ...metadata,
-      fileType: DICOM_CONTENT_TYPE,
-      // Parse existing metadata if it's a string, or use empty object if null
-      metadata: JSON.stringify({
-        ...(metadata.metadata ? JSON.parse(metadata.metadata) : {}),
-        isDicom: true,
-        dicomVersion: '3.0',
-        fileExtension: DICOM_EXTENSION
-      })
-    };
-    
-    return this.client.uploadImage(fileToUpload, dicomMetadata, onProgress);
-  }
-  
-  // Maintaining this method for backward compatibility and explicit DICOM handling
-  async uploadDicomImage(
-    file: File,
-    metadata: Partial<Image>,
-    onProgress?: (progressEvent: AxiosProgressEvent) => void
-  ): Promise<ApiResponse<Image>> {
-    return this.uploadImage(file, metadata, onProgress);
   }
 
-  async getImages(params?: {
-    page?: number;
-    limit?: number;
-    type?: ImageType;
-    status?: ImageStatus;
-    patientId?: string;
-    startDate?: string;
-    endDate?: string;
-    search?: string;
-  }): Promise<ApiResponse<PaginatedResponse<Image>>> {
-    return this.client.getImages(params);
+  async getImage(imageId: string): Promise<ApiResponse<Image>> {
+    return this.getClient().getImage(imageId);
   }
 
-  /**
-   * Get DICOM images with specialized filtering (alias for getImages)
-   * @param params Filter parameters
-   * @returns Paginated list of DICOM images
-   */
-  async getDicomImages(params?: {
-    page?: number;
-    limit?: number;
-    status?: ImageStatus;
-    patientId?: string;
-    startDate?: string;
-    endDate?: string;
-    search?: string;
-  }): Promise<ApiResponse<PaginatedResponse<Image>>> {
-    // All images are DICOM, so this is now equivalent to getImages
-    return this.getImages(params);
+  async deleteImage(imageId: string): Promise<ApiResponse<void>> {
+    return this.getClient().deleteImage(imageId);
   }
 
-  async getImage(id: string): Promise<ApiResponse<Image>> {
-    return this.client.getImage(id);
+  async updateImage(imageId: string, data: Partial<Image>): Promise<ApiResponse<Image>> {
+    return this.getClient().updateImage(imageId, data);
   }
 
-  async deleteImage(id: string): Promise<ApiResponse<void>> {
-    return this.client.deleteImage(id);
+  async shareImage(imageId: string, recipientId: string, options?: {
+    expiryDays?: number;
+    allowDownload?: boolean;
+  }): Promise<ApiResponse<void | SharedImage>> {
+    if (this.userRole === 'PATIENT') {
+      return this.patientClient.shareImage({
+        providerId: recipientId,
+        imageId,
+        expiryDays: options?.expiryDays || 30,
+        allowDownload: options?.allowDownload || true
+      });
+    } else {
+      return this.providerClient.shareImage(imageId, recipientId);
+    }
   }
 
-  async downloadImage(id: string): Promise<Blob> {
-    return this.client.downloadImage(id);
+  async revokeImageAccess(imageId: string, userId: string): Promise<ApiResponse<void>> {
+    return this.getClient().revokeImageAccess(imageId, userId);
+  }
+
+  async downloadImage(imageId: string): Promise<Blob> {
+    return this.getClient().downloadImage(imageId);
   }
 
   /**
@@ -148,10 +134,10 @@ export class ImageService {
    */
   async getDicomMetadata(id: string): Promise<ApiResponse<DicomMetadata>> {
     try {
-      const response = await this.client.get<DicomMetadata>(`/api/images/${id}/dicom-metadata`);
+      const response = await this.getClient().getDicomMetadata(id);
       return {
         status: 'success',
-        data: response,
+        data: response.data,
         error: undefined
       };
     } catch (error) {
@@ -205,8 +191,10 @@ export class ImageService {
   isDicom(image: Image): boolean {
     // All images are DICOM, but check for proper metadata
     const dicomImage = image as DicomImage;
-    return image.fileType === DICOM_CONTENT_TYPE && 
-      (Boolean(dicomImage.fileExtension === DICOM_EXTENSION) || 
-       Boolean(image.metadata && (image.metadata as any).fileExtension === DICOM_EXTENSION));
+    return image.fileType === 'application/dicom' && 
+      (Boolean(dicomImage.fileExtension === '.dcm') || 
+       Boolean(image.metadata && (image.metadata as any).fileExtension === '.dcm'));
   }
-} 
+}
+
+export const imageService = new ImageService(); 

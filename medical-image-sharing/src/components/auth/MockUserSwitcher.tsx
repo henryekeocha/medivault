@@ -2,14 +2,13 @@
 
 import React, { useState } from 'react';
 import { Button, Box, Typography, Paper, Grid, useTheme } from '@mui/material';
-import { useAuth } from '@/contexts/AuthContext';
-import { mockUsers } from '@/lib/mockAuth';
-import { User } from '@/lib/api/types';
-import { UserRole } from '@/types';
+import { useClerk, useUser } from '@clerk/nextjs';
+import { Role } from '@prisma/client';
 
 export const MockUserSwitcher: React.FC = () => {
   const theme = useTheme();
-  const { state, dispatch } = useAuth();
+  const { user } = useUser();
+  const { signOut } = useClerk();
   const [isOpen, setIsOpen] = useState(false);
   
   // Development only component
@@ -21,23 +20,37 @@ export const MockUserSwitcher: React.FC = () => {
     setIsOpen(!isOpen);
   };
 
-  const handleUserSelect = (role: UserRole) => {
+  const handleUserSelect = async (role: Role) => {
     setIsOpen(false);
-    const mockUser = createMockUser(role);
-    dispatch({ type: 'LOGIN_SUCCESS', payload: { user: mockUser, token: 'mock-token' } });
-    // Save in local storage to persist the mock state
-    localStorage.setItem('mockUser', JSON.stringify(mockUser));
+    try {
+      // Sign out current user
+      await signOut();
+      
+      // Create a new user with the selected role
+      const mockUser = createMockUser(role);
+      
+      // Sign in with the mock user
+      // Note: In a real application, you would use Clerk's API to create and sign in users
+      // This is just a mock implementation for development purposes
+      console.log('Mock user created:', mockUser);
+      
+      // Redirect to sign-in page
+      window.location.href = '/auth/login';
+    } catch (error) {
+      console.error('Error switching users:', error);
+    }
   };
 
-  const createMockUser = (role: UserRole): User => {
+  const createMockUser = (role: Role) => {
     const userId = `mock-${role.toLowerCase()}-${Date.now()}`;
-    const user: User = {
+    return {
       id: userId,
       name: `Mock ${role}`,
       email: `mock${role.toLowerCase()}@example.com`,
       role,
+      emailVerified: new Date(),
+      isActive: true,
     };
-    return user;
   };
 
   // Log warning in development console
@@ -47,74 +60,63 @@ export const MockUserSwitcher: React.FC = () => {
   );
 
   return (
-    <Paper 
-      elevation={3} 
-      sx={{ 
-        p: 2, 
-        m: 2, 
-        maxWidth: 400, 
-        mx: 'auto',
-        border: '2px solid',
-        borderColor: 'warning.main'
-      }}
-    >
-      <Typography variant="h6" component="h2" color="warning.main" sx={{ mb: 1 }}>
-        ⚠️ DEVELOPMENT MODE ONLY ⚠️
-      </Typography>
-      
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Current user: {state.user?.name || 'None'} ({state.user?.role || 'Not logged in'})
-      </Typography>
-      
-      <Grid container spacing={1}>
-        <Grid item xs={12}>
-          <Button 
-            variant="contained" 
-            color="primary" 
-            fullWidth
-            onClick={() => handleUserSelect('Admin')}
-            sx={{ mb: 1 }}
-          >
-            Log in as Admin
-          </Button>
-        </Grid>
-        
-        <Grid item xs={12}>
-          <Button 
-            variant="contained" 
-            color="secondary" 
-            fullWidth
-            onClick={() => handleUserSelect('Provider')}
-            sx={{ mb: 1 }}
-          >
-            Log in as Provider
-          </Button>
-        </Grid>
-        
-        <Grid item xs={12}>
-          <Button 
-            variant="contained" 
-            color="success" 
-            fullWidth
-            onClick={() => handleUserSelect('Patient')}
-            sx={{ mb: 1 }}
-          >
-            Log in as Patient
-          </Button>
-        </Grid>
-        
-        <Grid item xs={12}>
-          <Button 
-            variant="outlined" 
-            color="error" 
-            fullWidth
-            onClick={() => dispatch({ type: 'LOGOUT' })}
-          >
-            Log Out
-          </Button>
-        </Grid>
-      </Grid>
-    </Paper>
+    <Box sx={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1000 }}>
+      <Button
+        variant="contained"
+        color="secondary"
+        onClick={handleToggle}
+        sx={{ mb: 1 }}
+      >
+        Switch User
+      </Button>
+
+      {isOpen && (
+        <Paper
+          elevation={3}
+          sx={{
+            p: 2,
+            maxWidth: 300,
+            backgroundColor: theme.palette.background.paper,
+          }}
+        >
+          <Typography variant="subtitle2" gutterBottom>
+            Current User: {user?.fullName || 'Not signed in'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            Role: {(user?.publicMetadata?.role as string) || 'Unknown'}
+          </Typography>
+          <Grid container spacing={1}>
+            <Grid item xs={12}>
+              <Button
+                fullWidth
+                variant="outlined"
+                onClick={() => handleUserSelect(Role.PATIENT)}
+              >
+                Switch to Patient
+              </Button>
+            </Grid>
+            <Grid item xs={12}>
+              <Button
+                fullWidth
+                variant="outlined"
+                onClick={() => handleUserSelect(Role.PROVIDER)}
+              >
+                Switch to Provider
+              </Button>
+            </Grid>
+            <Grid item xs={12}>
+              <Button
+                fullWidth
+                variant="outlined"
+                onClick={() => handleUserSelect(Role.ADMIN)}
+              >
+                Switch to Admin
+              </Button>
+            </Grid>
+          </Grid>
+        </Paper>
+      )}
+    </Box>
   );
 };
 

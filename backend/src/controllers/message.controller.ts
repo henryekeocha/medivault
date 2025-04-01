@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { encryptData, decryptData } from '../middleware/encryption.js';
 import { AuthenticatedRequest } from '../types/auth.js';
 
@@ -208,5 +208,76 @@ export const getConversations = catchAsync(async (req: AuthenticatedRequest, res
     data: {
       conversations,
     },
+  });
+});
+
+// Template categories for message templates
+const templateCategories = [
+  { id: 'general', name: 'General' },
+  { id: 'appointment', name: 'Appointment' },
+  { id: 'results', name: 'Test Results' },
+  { id: 'followup', name: 'Follow-up Care' },
+  { id: 'prescription', name: 'Prescription' },
+  { id: 'billing', name: 'Billing & Insurance' },
+];
+
+// Initial message templates
+const messageTemplates = [
+  {
+    id: 'template-1',
+    title: 'Appointment Reminder',
+    content: 'This is a reminder that you have an appointment scheduled for [DATE] at [TIME]. Please let us know if you need to reschedule.',
+    category: 'appointment',
+    isDefault: true,
+  },
+  {
+    id: 'template-2',
+    title: 'Results Ready',
+    content: 'Your test results are now available. Please schedule a follow-up appointment to discuss the findings.',
+    category: 'results',
+    isDefault: true,
+  },
+  {
+    id: 'template-3',
+    title: 'Prescription Refill',
+    content: 'Your prescription refill has been processed and is ready for pickup at your pharmacy.',
+    category: 'prescription',
+    isDefault: true,
+  },
+  {
+    id: 'template-4',
+    title: 'Follow-up Needed',
+    content: 'Based on your recent imaging study, we recommend a follow-up appointment to discuss the results and next steps.',
+    category: 'followup',
+    isDefault: true,
+  },
+  {
+    id: 'template-5',
+    title: 'Additional Information Needed',
+    content: 'We need some additional information about your symptoms before your appointment. Can you please provide more details?',
+    category: 'general',
+    isDefault: true,
+  },
+];
+
+// Get message templates
+export const getMessageTemplates = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  // In a real implementation, these would be fetched from the database
+  // For now, we'll return the static templates
+  
+  res.status(200).json({
+    status: 'success',
+    data: messageTemplates
+  });
+});
+
+// Get message template categories
+export const getMessageTemplateCategories = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  // In a real implementation, these would be fetched from the database
+  // For now, we'll return the static categories
+  
+  res.status(200).json({
+    status: 'success',
+    data: templateCategories
   });
 }); 

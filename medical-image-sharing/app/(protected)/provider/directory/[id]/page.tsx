@@ -37,7 +37,7 @@ import {
   LocalHospital
 } from '@mui/icons-material';
 import { useRouter, useParams } from 'next/navigation';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { ProviderSpecialty } from '@prisma/client';
 
 interface Provider {
@@ -46,7 +46,7 @@ interface Provider {
   email: string;
   phone?: string;
   address?: string;
-  specialty?: ProviderSpecialty;
+  specialty?: string;
   bio?: string;
   credentials?: {
     education?: string[];
@@ -79,8 +79,7 @@ export default function ProviderDetails() {
       setLoading(true);
       setError(null);
       
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getUser(providerId);
+      const response = await providerClient.getProviderDetails(providerId);
       
       if (response.status === 'success' && response.data) {
         setProvider(response.data);

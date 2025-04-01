@@ -8,27 +8,33 @@
 │   ├── Dockerfile
 │   ├── README.md
 │   ├── baseline.sql
+│   ├── create-test-users.js
+│   ├── docs
+│   │   └── AUTH.md
 │   ├── jest.config.js
 │   ├── jest.config.ts
+│   ├── migrations-README.md
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── prisma
 │   │   ├── migrations
-│   │   │   ├── 20250227184119_init
+│   │   │   ├── 20250327213252_init
 │   │   │   │   └── migration.sql
-│   │   │   ├── 20250228001736_schema_updates
+│   │   │   ├── 20250327225239_add_clerk_user_id
 │   │   │   │   └── migration.sql
-│   │   │   ├── 20250228010055_update_system_settings_int_to_bigint
+│   │   │   ├── 20250327225409_update_auth_id_field
 │   │   │   │   └── migration.sql
-│   │   │   ├── 20250228020000_add_file_access_logs
+│   │   │   ├── 20250328211452_add_two_factor_enabled
 │   │   │   │   └── migration.sql
-│   │   │   ├── 20250228030000_convert_ids_to_uuid
+│   │   │   ├── 20250328212309_add_two_factor_secret
 │   │   │   │   └── migration.sql
-│   │   │   ├── add_missing_columns.sql
-│   │   │   ├── enum_migration.sql
-│   │   │   ├── migration_lock.toml
-│   │   │   ├── safe_schema_update.sql
-│   │   │   └── unique_constraints.sql
+│   │   │   ├── 20250328212719_add_last_active_at
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20250329141635_add_verification_code_fields
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20250329162324_remove_two_factor_enabled
+│   │   │   │   └── migration.sql
+│   │   │   └── migration_lock.toml
 │   │   ├── schema.prisma
 │   │   └── seed.ts
 │   ├── scripts
@@ -52,7 +58,7 @@
 │   │   │   ├── appointment.controller.ts
 │   │   │   ├── audit.controller.ts
 │   │   │   ├── auth
-│   │   │   │   └── cognito.controller.ts
+│   │   │   │   └── mfa.controller.js
 │   │   │   ├── auth.controller.ts
 │   │   │   ├── chatbot.controller.ts
 │   │   │   ├── file.controller.ts
@@ -63,36 +69,36 @@
 │   │   │   ├── patient.controller.ts
 │   │   │   ├── provider.controller.ts
 │   │   │   ├── settings.controller.ts
+│   │   │   ├── sync.controller.ts
 │   │   │   └── user.controller.ts
 │   │   ├── docs
 │   │   │   └── swagger.yaml
 │   │   ├── index.ts
 │   │   ├── lib
 │   │   │   ├── db-optimization.ts
+│   │   │   ├── prisma.js
 │   │   │   ├── prisma.ts
 │   │   │   ├── redis.js
 │   │   │   └── redis.ts
 │   │   ├── middleware
-│   │   │   ├── auth.ts
-│   │   │   ├── cognito-auth.ts
-│   │   │   ├── cognito.ts
+│   │   │   ├── analytics.ts
+│   │   │   ├── bypassAuth.ts
+│   │   │   ├── clerk.ts
 │   │   │   ├── encryption.ts
 │   │   │   ├── errorHandler.ts
 │   │   │   ├── hipaaLogger.ts
 │   │   │   ├── rateLimiter.ts
 │   │   │   ├── services.middleware.ts
+│   │   │   ├── syncUser.ts
+│   │   │   ├── twoFactorAuth.ts
 │   │   │   └── validation.ts
 │   │   ├── routes
 │   │   │   ├── analysis.ts
 │   │   │   ├── analytics.ts
 │   │   │   ├── appointments.ts
 │   │   │   ├── audit.ts
-│   │   │   ├── auth
-│   │   │   │   ├── devices.ts
-│   │   │   │   ├── mfa.ts
-│   │   │   │   ├── session.ts
-│   │   │   │   ├── social-login.ts
-│   │   │   │   └── user.ts
+│   │   │   ├── auth.js
+│   │   │   ├── auth.routes.ts
 │   │   │   ├── auth.ts
 │   │   │   ├── chatbot.ts
 │   │   │   ├── files.ts
@@ -104,10 +110,11 @@
 │   │   │   ├── patients.ts
 │   │   │   ├── providers.ts
 │   │   │   ├── settings.ts
+│   │   │   ├── sync.routes.ts
 │   │   │   ├── system.settings.ts
 │   │   │   └── users.ts
 │   │   ├── scripts
-│   │   │   ├── migrate-users-to-cognito.ts
+│   │   │   ├── create-test-users.ts
 │   │   │   └── updateUserIds.ts
 │   │   ├── seed
 │   │   │   └── create-test-users.ts
@@ -117,14 +124,9 @@
 │   │   │   ├── appointment.service.ts
 │   │   │   ├── auth
 │   │   │   │   ├── auth-options.ts
-│   │   │   │   ├── cognito-jwt-verifier.ts
-│   │   │   │   ├── mfa-service.ts
 │   │   │   │   └── token-service.ts
 │   │   │   ├── aws
 │   │   │   │   ├── aws-config.ts
-│   │   │   │   ├── cognito-config.ts
-│   │   │   │   ├── cognito-mfa-service.ts
-│   │   │   │   ├── cognito-service.ts
 │   │   │   │   ├── device-tracking.ts
 │   │   │   │   ├── s3-utils.ts
 │   │   │   │   └── social-identity-provider.ts
@@ -133,10 +135,9 @@
 │   │   │   ├── image-analysis.service.ts
 │   │   │   ├── notification.service.ts
 │   │   │   └── websocket.service.ts
-│   │   ├── standalone
-│   │   │   └── cognito-server.ts
 │   │   ├── swagger.yaml
 │   │   ├── types
+│   │   │   ├── analytics.ts
 │   │   │   ├── auth.ts
 │   │   │   ├── enums.ts
 │   │   │   ├── index.d.ts
@@ -159,6 +160,7 @@
 │   └── uploads
 ├── check-db-enums.js
 ├── create-simple-user.js
+├── create-test-users.js
 ├── create_env_examples.sh
 ├── docker-compose.yml
 ├── full_app_structure.txt
@@ -168,6 +170,511 @@
 │   ├── Dockerfile
 │   ├── README-test-users.md
 │   ├── README.md
+│   ├── _backup
+│   │   └── pages_backup
+│   │       ├── (protected)
+│   │       │   ├── admin
+│   │       │   │   ├── analytics
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── appointments
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── audit
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── backups
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── dashboard
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── error-showcase
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── images
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── layout.tsx
+│   │       │   │   ├── messages
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── page.tsx
+│   │       │   │   ├── profile
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── settings
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── stats
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── storage
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── test-users
+│   │       │   │   │   └── page.tsx
+│   │       │   │   └── users
+│   │       │   │       └── page.tsx
+│   │       │   ├── layout.tsx
+│   │       │   ├── patient
+│   │       │   │   ├── analytics
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── appointments
+│   │       │   │   │   ├── [id]
+│   │       │   │   │   ├── error.tsx
+│   │       │   │   │   ├── loading.tsx
+│   │       │   │   │   ├── metadata.ts
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── chatbot
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── dashboard
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── images
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── messages
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── profile
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── providers
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── records
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── settings
+│   │       │   │   │   └── page.tsx
+│   │       │   │   ├── share
+│   │       │   │   │   └── page.tsx
+│   │       │   │   └── upload
+│   │       │   │       └── page.tsx
+│   │       │   ├── profile
+│   │       │   │   ├── mfa
+│   │       │   │   └── page.tsx
+│   │       │   └── provider
+│   │       │       ├── analysis
+│   │       │       │   └── page.tsx
+│   │       │       ├── analytics
+│   │       │       │   └── page.tsx
+│   │       │       ├── appointments
+│   │       │       │   ├── [id]
+│   │       │       │   ├── complete
+│   │       │       │   ├── error.tsx
+│   │       │       │   ├── loading.tsx
+│   │       │       │   ├── metadata.ts
+│   │       │       │   └── page.tsx
+│   │       │       ├── availability
+│   │       │       │   └── page.tsx
+│   │       │       ├── dashboard
+│   │       │       │   └── page.tsx
+│   │       │       ├── directory
+│   │       │       │   ├── [id]
+│   │       │       │   └── page.tsx
+│   │       │       ├── images
+│   │       │       │   └── page.tsx
+│   │       │       ├── messages
+│   │       │       │   ├── page.tsx
+│   │       │       │   └── templates
+│   │       │       ├── patients
+│   │       │       │   ├── [id]
+│   │       │       │   ├── edit
+│   │       │       │   └── page.tsx
+│   │       │       ├── profile
+│   │       │       │   └── page.tsx
+│   │       │       ├── settings
+│   │       │       │   └── page.tsx
+│   │       │       ├── share
+│   │       │       │   └── page.tsx
+│   │       │       ├── upload
+│   │       │       │   └── page.tsx
+│   │       │       └── verification
+│   │       │           └── page.tsx
+│   │       ├── account
+│   │       │   └── devices
+│   │       │       └── page.tsx
+│   │       ├── api
+│   │       │   ├── admin
+│   │       │   │   └── provider-verifications
+│   │       │   │       ├── [id]
+│   │       │   │       └── route.ts
+│   │       │   ├── appointments
+│   │       │   │   ├── [id]
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── provider
+│   │       │   │   │   └── [id]
+│   │       │   │   └── route.ts
+│   │       │   ├── auth
+│   │       │   │   ├── [...nextauth]
+│   │       │   │   ├── _log
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── devices
+│   │       │   │   │   ├── [deviceKey]
+│   │       │   │   │   ├── events
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── error
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── forgot-password
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── link-account
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── login
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── mfa
+│   │       │   │   │   ├── disable
+│   │       │   │   │   ├── setup
+│   │       │   │   │   └── verify
+│   │       │   │   ├── refresh
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── register
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── resend-verification
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── reset-password
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── revoke
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── session
+│   │       │   │   │   └── route.ts
+│   │       │   │   ├── social
+│   │       │   │   │   ├── [provider]
+│   │       │   │   │   └── providers
+│   │       │   │   ├── validate
+│   │       │   │   │   └── route.ts
+│   │       │   │   └── verify-email
+│   │       │   │       └── route.ts
+│   │       │   ├── files
+│   │       │   │   └── upload
+│   │       │   │       └── route.ts
+│   │       │   ├── health
+│   │       │   │   └── route.ts
+│   │       │   ├── images
+│   │       │   │   └── [id]
+│   │       │   │       ├── dicom-metadata
+│   │       │   │       └── dicom-view
+│   │       │   ├── notifications
+│   │       │   │   ├── [id]
+│   │       │   │   │   └── route.ts
+│   │       │   │   └── route.ts
+│   │       │   ├── provider
+│   │       │   │   └── verification
+│   │       │   │       └── route.ts
+│   │       │   └── users
+│   │       │       └── profile
+│   │       │           ├── image
+│   │       │           ├── request-verification
+│   │       │           ├── route.ts
+│   │       │           └── verify
+│   │       ├── auth
+│   │       │   ├── debug
+│   │       │   │   └── page.tsx
+│   │       │   ├── forgot-password
+│   │       │   │   └── page.tsx
+│   │       │   ├── login
+│   │       │   │   └── page.tsx
+│   │       │   ├── logout
+│   │       │   │   └── page.tsx
+│   │       │   ├── register
+│   │       │   │   └── page.tsx
+│   │       │   ├── reset-password
+│   │       │   │   └── page.tsx
+│   │       │   ├── social-callback
+│   │       │   └── verify-email
+│   │       │       └── page.tsx
+│   │       ├── auth-test
+│   │       │   └── page.tsx
+│   │       ├── dashboard
+│   │       │   └── page.tsx
+│   │       ├── favicon.ico
+│   │       ├── globals.css
+│   │       ├── health
+│   │       │   └── page.tsx
+│   │       ├── images
+│   │       │   └── page.tsx
+│   │       ├── layout.tsx
+│   │       ├── loading.tsx
+│   │       ├── manual-tests
+│   │       │   └── page.tsx
+│   │       ├── messages
+│   │       │   ├── [chatId]
+│   │       │   │   └── page.tsx
+│   │       │   └── page.tsx
+│   │       ├── page.tsx
+│   │       ├── patients
+│   │       │   └── page.tsx
+│   │       ├── profile
+│   │       ├── public-profile
+│   │       │   └── page.tsx
+│   │       ├── reports
+│   │       │   ├── appointments
+│   │       │   │   └── page.tsx
+│   │       │   ├── images
+│   │       │   │   └── page.tsx
+│   │       │   ├── page.tsx
+│   │       │   ├── performance
+│   │       │   │   └── page.tsx
+│   │       │   └── users
+│   │       │       └── page.tsx
+│   │       ├── settings
+│   │       │   └── page.tsx
+│   │       ├── share
+│   │       │   └── page.tsx
+│   │       └── upload
+│   │           └── page.tsx
+│   ├── app
+│   │   ├── (protected)
+│   │   │   ├── admin
+│   │   │   │   ├── analytics
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── appointments
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── audit
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── backups
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── dashboard
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── error-showcase
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── images
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── layout.tsx
+│   │   │   │   ├── messages
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── page.tsx
+│   │   │   │   ├── profile
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── settings
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── stats
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── storage
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── test-users
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── users
+│   │   │   │       └── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   ├── patient
+│   │   │   │   ├── analytics
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── appointments
+│   │   │   │   │   ├── [id]
+│   │   │   │   │   │   └── page.tsx
+│   │   │   │   │   ├── error.tsx
+│   │   │   │   │   ├── loading.tsx
+│   │   │   │   │   ├── metadata.ts
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── chatbot
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── dashboard
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── images
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── messages
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── profile
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── providers
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── records
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── settings
+│   │   │   │   │   └── page.tsx
+│   │   │   │   ├── share
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── upload
+│   │   │   │       └── page.tsx
+│   │   │   ├── profile
+│   │   │   │   ├── mfa
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── page.tsx
+│   │   │   └── provider
+│   │   │       ├── analysis
+│   │   │       │   └── page.tsx
+│   │   │       ├── analytics
+│   │   │       │   └── page.tsx
+│   │   │       ├── appointments
+│   │   │       │   ├── [id]
+│   │   │       │   │   └── page.tsx
+│   │   │       │   ├── complete
+│   │   │       │   │   └── [id]
+│   │   │       │   ├── error.tsx
+│   │   │       │   ├── loading.tsx
+│   │   │       │   ├── metadata.ts
+│   │   │       │   └── page.tsx
+│   │   │       ├── availability
+│   │   │       │   └── page.tsx
+│   │   │       ├── dashboard
+│   │   │       │   └── page.tsx
+│   │   │       ├── directory
+│   │   │       │   ├── [id]
+│   │   │       │   │   └── page.tsx
+│   │   │       │   └── page.tsx
+│   │   │       ├── images
+│   │   │       │   └── page.tsx
+│   │   │       ├── messages
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── templates
+│   │   │       │       └── page.tsx
+│   │   │       ├── patients
+│   │   │       │   ├── [id]
+│   │   │       │   │   └── page.tsx
+│   │   │       │   ├── add
+│   │   │       │   │   └── page.tsx
+│   │   │       │   ├── edit
+│   │   │       │   │   └── [id]
+│   │   │       │   └── page.tsx
+│   │   │       ├── profile
+│   │   │       │   └── page.tsx
+│   │   │       ├── settings
+│   │   │       │   ├── components
+│   │   │       │   │   ├── AvailabilitySettingsForm.tsx
+│   │   │       │   │   ├── ImageSharingSettingsForm.tsx
+│   │   │       │   │   ├── NotificationSettingsForm.tsx
+│   │   │       │   │   ├── PracticeInfoForm.tsx
+│   │   │       │   │   └── SecuritySettingsForm.tsx
+│   │   │       │   └── page.tsx
+│   │   │       ├── share
+│   │   │       │   └── page.tsx
+│   │   │       ├── upload
+│   │   │       │   └── page.tsx
+│   │   │       └── verification
+│   │   │           └── page.tsx
+│   │   ├── account
+│   │   │   └── devices
+│   │   │       └── page.tsx
+│   │   ├── api
+│   │   │   ├── admin
+│   │   │   │   └── provider-verifications
+│   │   │   │       ├── [id]
+│   │   │   │       │   └── review
+│   │   │   │       └── route.ts
+│   │   │   ├── appointments
+│   │   │   │   ├── [id]
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── provider
+│   │   │   │   │   └── [id]
+│   │   │   │   │       └── availability
+│   │   │   │   └── route.ts
+│   │   │   ├── auth
+│   │   │   │   ├── check-sync
+│   │   │   │   │   └── [userId]
+│   │   │   │   │       └── route.ts
+│   │   │   │   ├── send-code
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── sync
+│   │   │   │   │   └── [clerkId]
+│   │   │   │   │       └── route.ts
+│   │   │   │   ├── test-user
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── users
+│   │   │   │   │   └── create
+│   │   │   │   │       └── route.ts
+│   │   │   │   └── verify-code
+│   │   │   │       └── route.ts
+│   │   │   ├── files
+│   │   │   │   └── upload
+│   │   │   │       └── route.ts
+│   │   │   ├── health
+│   │   │   │   └── route.ts
+│   │   │   ├── images
+│   │   │   │   └── [id]
+│   │   │   │       ├── dicom-metadata
+│   │   │   │       │   └── route.ts
+│   │   │   │       └── dicom-view
+│   │   │   │           └── route.ts
+│   │   │   ├── notifications
+│   │   │   │   ├── [id]
+│   │   │   │   │   ├── read
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── read-all
+│   │   │   │   │   └── route.ts
+│   │   │   │   └── route.ts
+│   │   │   ├── provider
+│   │   │   │   └── verification
+│   │   │   │       └── route.ts
+│   │   │   ├── users
+│   │   │   │   ├── me
+│   │   │   │   │   └── route.ts
+│   │   │   │   ├── profile
+│   │   │   │   │   ├── image
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── request-verification
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   ├── route.ts
+│   │   │   │   │   └── verify
+│   │   │   │   │       └── route.ts
+│   │   │   │   ├── route.ts
+│   │   │   │   └── sync
+│   │   │   │       └── route.ts
+│   │   │   ├── v1
+│   │   │   │   ├── analytics
+│   │   │   │   │   ├── provider
+│   │   │   │   │   │   └── [providerId]
+│   │   │   │   │   └── users
+│   │   │   │   │       └── [userId]
+│   │   │   │   ├── appointments
+│   │   │   │   │   └── provider
+│   │   │   │   │       └── [doctorId]
+│   │   │   │   └── provider
+│   │   │   │       ├── analytics
+│   │   │   │       │   └── route.ts
+│   │   │   │       └── appointments
+│   │   │   │           └── route.ts
+│   │   │   └── webhook
+│   │   │       └── clerk
+│   │   │           └── route.ts
+│   │   ├── auth
+│   │   │   ├── debug
+│   │   │   │   └── page.tsx
+│   │   │   ├── error
+│   │   │   │   └── page.tsx
+│   │   │   ├── forgot-password
+│   │   │   │   └── page.tsx
+│   │   │   ├── login
+│   │   │   │   └── page.tsx
+│   │   │   ├── logout
+│   │   │   │   └── page.tsx
+│   │   │   ├── register
+│   │   │   │   └── page.tsx
+│   │   │   ├── reset-password
+│   │   │   │   └── page.tsx
+│   │   │   ├── sync-user
+│   │   │   │   └── page.tsx
+│   │   │   ├── verify-2fa
+│   │   │   │   └── page.tsx
+│   │   │   └── verify-email
+│   │   │       └── page.tsx
+│   │   ├── auth-test
+│   │   │   └── page.tsx
+│   │   ├── components
+│   │   │   └── ClientLayout.tsx
+│   │   ├── dashboard
+│   │   │   └── page.tsx
+│   │   ├── favicon.ico
+│   │   ├── globals.css
+│   │   ├── health
+│   │   │   └── page.tsx
+│   │   ├── images
+│   │   │   └── page.tsx
+│   │   ├── layout.tsx
+│   │   ├── loading.tsx
+│   │   ├── manual-tests
+│   │   │   └── page.tsx
+│   │   ├── messages
+│   │   │   ├── [chatId]
+│   │   │   │   └── page.tsx
+│   │   │   └── page.tsx
+│   │   ├── page.tsx
+│   │   ├── patients
+│   │   │   └── page.tsx
+│   │   ├── public-profile
+│   │   │   └── page.tsx
+│   │   ├── reports
+│   │   │   ├── appointments
+│   │   │   │   └── page.tsx
+│   │   │   ├── images
+│   │   │   │   └── page.tsx
+│   │   │   ├── page.tsx
+│   │   │   ├── performance
+│   │   │   │   └── page.tsx
+│   │   │   └── users
+│   │   │       └── page.tsx
+│   │   ├── settings
+│   │   │   └── page.tsx
+│   │   ├── share
+│   │   │   └── page.tsx
+│   │   ├── unauthorized
+│   │   │   └── page.tsx
+│   │   └── upload
+│   │       └── page.tsx
 │   ├── aws
 │   │   └── cloudtrail-setup.yaml
 │   ├── docs
@@ -184,6 +691,7 @@
 │   │   └── mock-to-api-migration.md
 │   ├── eslint.config.mjs
 │   ├── frontend_app_structure.txt
+│   ├── middleware.ts
 │   ├── next-env.d.ts
 │   ├── next.config.js
 │   ├── package-lock.json
@@ -194,6 +702,14 @@
 │   │   │   ├── 20250228232149_init
 │   │   │   │   └── migration.sql
 │   │   │   ├── 20250301021000_fix_uuid_types
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20250320034358_add_auth_tokens
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20250320034612_add_file_upload
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20250328015713_add_auth_id
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20250328015813_make_password_optional
 │   │   │   │   └── migration.sql
 │   │   │   └── migration_lock.toml
 │   │   ├── schema.prisma
@@ -212,14 +728,17 @@
 │   │   ├── scripts
 │   │   ├── tests
 │   │   │   └── manual-auth-tests.md
+│   │   ├── uploads
 │   │   ├── vercel.svg
 │   │   ├── window.svg
 │   │   └── workflow-image.png
 │   ├── scripts
 │   │   ├── README.md
 │   │   ├── check-health.js
+│   │   ├── consolidate-apis.sh
 │   │   ├── create-test-users.js
 │   │   ├── create-test-users.ts
+│   │   ├── find-mock-data.sh
 │   │   ├── property-consistency-check.js
 │   │   ├── responsive-check.js
 │   │   ├── set-env.sh
@@ -230,224 +749,8 @@
 │   │   └── update-imports.sh
 │   ├── src
 │   │   ├── app
-│   │   │   ├── (protected)
-│   │   │   │   ├── admin
-│   │   │   │   │   ├── analytics
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── appointments
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── audit
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── backups
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── dashboard
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── error-showcase
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── images
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── layout.tsx
-│   │   │   │   │   ├── messages
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── page.tsx
-│   │   │   │   │   ├── profile
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── settings
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── stats
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── storage
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── test-users
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   └── users
-│   │   │   │   │       └── page.tsx
-│   │   │   │   ├── layout.tsx
-│   │   │   │   ├── patient
-│   │   │   │   │   ├── analytics
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── appointments
-│   │   │   │   │   │   ├── [id]
-│   │   │   │   │   │   ├── error.tsx
-│   │   │   │   │   │   ├── loading.tsx
-│   │   │   │   │   │   ├── metadata.ts
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── chatbot
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── dashboard
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── images
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── messages
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── profile
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── providers
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── records
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── settings
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   ├── share
-│   │   │   │   │   │   └── page.tsx
-│   │   │   │   │   └── upload
-│   │   │   │   │       └── page.tsx
-│   │   │   │   ├── profile
-│   │   │   │   │   ├── mfa
-│   │   │   │   │   └── page.tsx
-│   │   │   │   └── provider
-│   │   │   │       ├── analysis
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── analytics
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── appointments
-│   │   │   │       │   ├── [id]
-│   │   │   │       │   ├── complete
-│   │   │   │       │   ├── error.tsx
-│   │   │   │       │   ├── loading.tsx
-│   │   │   │       │   ├── metadata.ts
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── availability
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── dashboard
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── directory
-│   │   │   │       │   ├── [id]
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── images
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── messages
-│   │   │   │       │   ├── page.tsx
-│   │   │   │       │   └── templates
-│   │   │   │       ├── patients
-│   │   │   │       │   ├── [id]
-│   │   │   │       │   ├── edit
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── profile
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── settings
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── share
-│   │   │   │       │   └── page.tsx
-│   │   │   │       ├── upload
-│   │   │   │       │   └── page.tsx
-│   │   │   │       └── verification
-│   │   │   │           └── page.tsx
-│   │   │   ├── account
-│   │   │   │   └── devices
-│   │   │   │       └── page.tsx
-│   │   │   ├── api
-│   │   │   │   ├── admin
-│   │   │   │   │   └── provider-verifications
-│   │   │   │   │       ├── [id]
-│   │   │   │   │       └── route.ts
-│   │   │   │   ├── appointments
-│   │   │   │   │   ├── [id]
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── provider
-│   │   │   │   │   │   └── [id]
-│   │   │   │   │   └── route.ts
-│   │   │   │   ├── auth
-│   │   │   │   │   ├── [...nextauth]
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── devices
-│   │   │   │   │   │   ├── [deviceKey]
-│   │   │   │   │   │   ├── events
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── link-account
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── login
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── mfa
-│   │   │   │   │   │   ├── disable
-│   │   │   │   │   │   ├── setup
-│   │   │   │   │   │   └── verify
-│   │   │   │   │   ├── refresh
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── register
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── revoke
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   ├── social
-│   │   │   │   │   │   ├── [provider]
-│   │   │   │   │   │   └── providers
-│   │   │   │   │   └── validate
-│   │   │   │   │       └── route.ts
-│   │   │   │   ├── health
-│   │   │   │   │   └── route.ts
-│   │   │   │   ├── images
-│   │   │   │   │   └── [id]
-│   │   │   │   │       ├── dicom-metadata
-│   │   │   │   │       └── dicom-view
-│   │   │   │   ├── notifications
-│   │   │   │   │   ├── [id]
-│   │   │   │   │   │   └── route.ts
-│   │   │   │   │   └── route.ts
-│   │   │   │   ├── provider
-│   │   │   │   │   └── verification
-│   │   │   │   │       └── route.ts
-│   │   │   │   └── users
-│   │   │   │       └── profile
-│   │   │   │           ├── image
-│   │   │   │           ├── request-verification
-│   │   │   │           ├── route.ts
-│   │   │   │           └── verify
-│   │   │   ├── auth
-│   │   │   │   ├── debug
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── forgot-password
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── login
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── logout
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── register
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── reset-password
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── social-callback
-│   │   │   │   └── verify-email
-│   │   │   │       └── page.tsx
-│   │   │   ├── auth-test
-│   │   │   │   └── page.tsx
-│   │   │   ├── dashboard
-│   │   │   │   └── page.tsx
-│   │   │   ├── favicon.ico
-│   │   │   ├── globals.css
-│   │   │   ├── health
-│   │   │   │   └── page.tsx
-│   │   │   ├── images
-│   │   │   │   └── page.tsx
-│   │   │   ├── layout.tsx
-│   │   │   ├── loading.tsx
-│   │   │   ├── manual-tests
-│   │   │   │   └── page.tsx
-│   │   │   ├── messages
-│   │   │   │   ├── [chatId]
-│   │   │   │   │   └── page.tsx
-│   │   │   │   └── page.tsx
-│   │   │   ├── page.tsx
-│   │   │   ├── patients
-│   │   │   │   └── page.tsx
-│   │   │   ├── profile
-│   │   │   ├── public-profile
-│   │   │   │   └── page.tsx
-│   │   │   ├── reports
-│   │   │   │   ├── appointments
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── images
-│   │   │   │   │   └── page.tsx
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── performance
-│   │   │   │   │   └── page.tsx
-│   │   │   │   └── users
-│   │   │   │       └── page.tsx
-│   │   │   ├── settings
-│   │   │   │   └── page.tsx
-│   │   │   ├── share
-│   │   │   │   └── page.tsx
-│   │   │   └── upload
-│   │   │       └── page.tsx
+│   │   │   └── api
+│   │   │       └── users
 │   │   ├── components
 │   │   │   ├── DataTable.tsx
 │   │   │   ├── ErrorBoundary.tsx
@@ -459,7 +762,6 @@
 │   │   │   ├── ProtectedRoute.tsx
 │   │   │   ├── Providers.tsx
 │   │   │   ├── SkeletonLoader.tsx
-│   │   │   ├── Toast.tsx
 │   │   │   ├── WorkflowImage.tsx
 │   │   │   ├── accessibility
 │   │   │   │   └── AccessibilityButton.tsx
@@ -478,10 +780,15 @@
 │   │   │   │   ├── LoginForm.tsx
 │   │   │   │   ├── MockUserSwitcher.tsx
 │   │   │   │   ├── RegisterForm.tsx
+│   │   │   │   ├── SignInClerk.tsx
+│   │   │   │   ├── SocialLoginButtons.tsx
+│   │   │   │   ├── SyncUserButton.tsx
 │   │   │   │   └── TwoFactorForm.tsx
 │   │   │   ├── chatbot
 │   │   │   │   ├── Chatbot.tsx
 │   │   │   │   └── index.tsx
+│   │   │   ├── common
+│   │   │   │   └── LoadingScreen.tsx
 │   │   │   ├── dashboard
 │   │   │   │   ├── ActivityTimeline.tsx
 │   │   │   │   ├── HealthMetricsChart.tsx
@@ -503,6 +810,7 @@
 │   │   │   │   ├── HomeContent.tsx
 │   │   │   │   └── HomeContent.tsx.backup
 │   │   │   ├── layout
+│   │   │   │   ├── Dashboard.tsx
 │   │   │   │   ├── DashboardLayout.tsx
 │   │   │   │   ├── Footer.tsx
 │   │   │   │   └── Navbar.tsx
@@ -518,6 +826,9 @@
 │   │   │   │   └── PatientNotesEditor.tsx
 │   │   │   ├── profile
 │   │   │   │   └── ProfileForm.tsx
+│   │   │   ├── providers
+│   │   │   │   ├── ClerkProvider.tsx
+│   │   │   │   └── WebSocketProvider.tsx
 │   │   │   └── shares
 │   │   │       └── ShareDialog.tsx
 │   │   ├── config
@@ -535,13 +846,16 @@
 │   │   │   ├── useErrorHandler.ts
 │   │   │   └── useToast.ts
 │   │   ├── lib
-│   │   │   ├── amplify
 │   │   │   ├── api
+│   │   │   │   ├── adminClient.ts
 │   │   │   │   ├── api.ts
 │   │   │   │   ├── auditLog.ts
-│   │   │   │   ├── client.ts
+│   │   │   │   ├── authClient.ts
+│   │   │   │   ├── baseClient.ts
 │   │   │   │   ├── error-handler.ts
 │   │   │   │   ├── index.ts
+│   │   │   │   ├── patientClient.ts
+│   │   │   │   ├── providerClient.ts
 │   │   │   │   ├── s3-api.ts
 │   │   │   │   ├── services
 │   │   │   │   │   ├── annotation.service.ts
@@ -552,19 +866,27 @@
 │   │   │   │   │   ├── share.service.ts
 │   │   │   │   │   ├── user-profile.service.ts
 │   │   │   │   │   └── websocket.service.ts
-│   │   │   │   └── types.ts
+│   │   │   │   ├── sharedClient.ts
+│   │   │   │   ├── types.ts
+│   │   │   │   └── utils
+│   │   │   │       ├── auth.ts
+│   │   │   │       └── syncUser.ts
 │   │   │   ├── audit-logger.ts
-│   │   │   ├── auth
-│   │   │   │   ├── auth-options.ts
-│   │   │   │   ├── auth-service.ts
-│   │   │   │   ├── mfa-service.ts
-│   │   │   │   └── token-service.ts
-│   │   │   ├── auth.ts
 │   │   │   ├── aws
 │   │   │   │   ├── aws-config.ts
 │   │   │   │   └── s3-utils.ts
+│   │   │   ├── clerk
+│   │   │   │   ├── actions.ts
+│   │   │   │   ├── auth-service.ts
+│   │   │   │   ├── config.ts
+│   │   │   │   ├── create-user.ts
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── jwt.ts
+│   │   │   │   ├── server-auth-service.ts
+│   │   │   │   └── use-auth.ts
 │   │   │   ├── db
 │   │   │   │   └── index.ts
+│   │   │   ├── email.ts
 │   │   │   ├── hipaa.ts
 │   │   │   ├── mockAuth.ts
 │   │   │   ├── prisma.ts
@@ -577,8 +899,9 @@
 │   │   │   └── verification
 │   │   │       └── license-verification.ts
 │   │   ├── middleware.ts
+│   │   ├── pages
+│   │   │   └── api
 │   │   ├── services
-│   │   │   └── deviceService.ts
 │   │   ├── styles
 │   │   │   └── home.css
 │   │   ├── tests
@@ -591,6 +914,7 @@
 │   │   ├── types
 │   │   │   ├── analysis.ts
 │   │   │   ├── auth.ts
+│   │   │   ├── clerk.d.ts
 │   │   │   ├── index.ts
 │   │   │   ├── prisma.ts
 │   │   │   ├── routes.ts
@@ -602,6 +926,7 @@
 │   │       └── formatBytes.ts
 │   ├── tailwind.config.js
 │   ├── tailwind.config.ts
+│   ├── test-prisma.js
 │   ├── testing
 │   │   ├── appointment-functionality-testing.md
 │   │   ├── appointment-test-plan.md
@@ -613,6 +938,8 @@
 ├── medical_imaging_backup.sql
 ├── package-lock.json
 ├── package.json
+├── prisma
+│   └── test-script.js
 ├── public
 │   ├── Brain Scan.jpeg
 │   ├── demo.gif
@@ -627,4 +954,4 @@
 ├── tsconfig.jest.json
 └── users_backup.sql
 
-204 directories, 424 files
+373 directories, 582 files

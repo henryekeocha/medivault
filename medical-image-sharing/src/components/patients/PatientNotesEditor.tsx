@@ -23,15 +23,27 @@ import {
   Edit as EditIcon 
 } from '@mui/icons-material';
 import dynamic from 'next/dynamic';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
+import type { ReactQuillProps } from 'react-quill';
 
 // Dynamically import the rich text editor to avoid SSR issues
-const ReactQuill = dynamic(() => import('react-quill'), { 
-  ssr: false,
-  loading: () => <Box sx={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <CircularProgress size={24} />
-  </Box>
-});
+const ReactQuill = dynamic(
+  async () => {
+    const { default: RQ } = await import('react-quill');
+    // Create a wrapper component that properly handles types
+    const ReactQuillWrapper = (props: ReactQuillProps) => {
+      const Component = RQ as any;
+      return <Component {...props} />;
+    };
+    return ReactQuillWrapper;
+  },
+  { 
+    ssr: false,
+    loading: () => <Box sx={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <CircularProgress size={24} />
+    </Box>
+  }
+);
 
 interface PatientNotesEditorProps {
   patientId: string;
@@ -72,7 +84,7 @@ const PatientNotesEditor: React.FC<PatientNotesEditorProps> = ({
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const quillRef = useRef<any>(null);
+  const quillRef = useRef<typeof ReactQuill>(null);
 
   useEffect(() => {
     if (initialNotes) {
@@ -98,10 +110,9 @@ const PatientNotesEditor: React.FC<PatientNotesEditorProps> = ({
     try {
       setLoading(true);
       setError(null);
-      const apiClient = ApiClient.getInstance();
       
-      // Call the API to save patient notes
-      const response = await apiClient.addPatientNotes(patientId, notes);
+      // Call the API to save patient notes using providerClient
+      const response = await providerClient.addPatientNotes(patientId, notes);
       
       if (response.status === 'success') {
         // Show success message
@@ -162,7 +173,6 @@ const PatientNotesEditor: React.FC<PatientNotesEditorProps> = ({
         }}
       >
         <ReactQuill
-          ref={quillRef}
           theme="snow"
           value={notes}
           onChange={handleChange}

@@ -17,10 +17,11 @@ import {
   IconButton,
 } from '@mui/material';
 import { ContentCopy as CopyIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
+import { withProtectedRoute } from '@/components/ProtectedRoute';
 
-export default function SharePage() {
-  const { state } = useAuth();
+function SharePage() {
+  const { data: session } = useSession();
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [expiryDays, setExpiryDays] = useState<number>(7);
   const [generatedLinks, setGeneratedLinks] = useState<Array<{ id: string; url: string; expiry: Date }>>([]);
@@ -133,4 +134,9 @@ export default function SharePage() {
       </Snackbar>
     </Container>
   );
-} 
+}
+
+export default withProtectedRoute(SharePage, {
+  allowedRoles: ['PROVIDER', 'PATIENT'],
+  requireAuth: true,
+}); 

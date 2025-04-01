@@ -26,6 +26,14 @@ import {
   Tabs,
   Tab,
   CircularProgress,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -39,9 +47,10 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format, addDays, isAfter, isSameDay, parse, setHours, setMinutes } from 'date-fns';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { providerClient } from '@/lib/api/providerClient';
+import { useUser } from '@clerk/nextjs';
 import { useToast } from '@/contexts/ToastContext';
+import { useErrorHandler } from '@/hooks/useErrorHandler';
 
 // Interface for availability timeblock
 interface TimeBlock {
@@ -73,7 +82,7 @@ const defaultWorkingHours = [
 ];
 
 export default function ProviderAvailabilityPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const { showSuccess, showError } = useToast();
   const [tab, setTab] = useState(0);
   
@@ -106,14 +115,32 @@ export default function ProviderAvailabilityPage() {
   
   // UI state
   const [success, setSuccess] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openBlockDialog, setOpenBlockDialog] = useState(false);
+  const [openBlockedTimeDialog, setOpenBlockedTimeDialog] = useState(false);
+  const { handleError, withErrorHandling } = useErrorHandler({
+    context: 'Provider Availability',
+    showToastByDefault: true
+  });
   
   // Load data on component mount
   useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!user) {
+      return;
+    }
+
+    // Check if user has provider role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PROVIDER') {
+      return;
+    }
+    
     fetchAvailabilityData();
-  }, []);
+  }, [isLoaded, user]);
   
   // Fetch all availability data from the API
   const fetchAvailabilityData = async () => {
@@ -122,36 +149,30 @@ export default function ProviderAvailabilityPage() {
     
     try {
       // Fetch regular hours
-      const hoursResponse = await ApiClient.getInstance().getProviderWorkingHours();
-      if (hoursResponse.data && Array.isArray(hoursResponse.data)) {
+      const hoursResponse = await providerClient.getWorkingHours();
+      if (hoursResponse.status === 'success' && hoursResponse.data) {
         setRegularHours(hoursResponse.data);
       } else {
         setRegularHours(defaultWorkingHours);
       }
       
       // Fetch custom availability blocks
-      const blocksResponse = await ApiClient.getInstance().getProviderAvailabilityBlocks();
-      if (blocksResponse.data && Array.isArray(blocksResponse.data)) {
+      const blocksResponse = await providerClient.getAvailabilityBlocks();
+      if (blocksResponse.status === 'success' && blocksResponse.data) {
         setAvailabilityBlocks(blocksResponse.data);
       } else {
         setAvailabilityBlocks([]);
       }
       
       // Fetch blocked time periods
-      const blockedResponse = await ApiClient.getInstance().getProviderBlockedTimes();
-      if (blockedResponse.data && Array.isArray(blockedResponse.data)) {
+      const blockedResponse = await providerClient.getBlockedTimes();
+      if (blockedResponse.status === 'success' && blockedResponse.data) {
         setBlockedTimes(blockedResponse.data);
       } else {
         setBlockedTimes([]);
       }
-    } catch (error: any) {
-      console.error('Error fetching availability data:', error);
-      setError('Failed to load availability data. Please try again later.');
-      showError('Failed to load availability data');
-      // Set default values on error
-      setRegularHours(defaultWorkingHours);
-      setAvailabilityBlocks([]);
-      setBlockedTimes([]);
+    } catch (err) {
+      handleError(err);
     } finally {
       setInitialLoading(false);
     }
@@ -163,18 +184,17 @@ export default function ProviderAvailabilityPage() {
       setLoading(true);
       setError(null);
       
-      const response = await ApiClient.getInstance().saveProviderWorkingHours(regularHours);
+      const response = await providerClient.saveWorkingHours(regularHours);
       
-      if (response.status === 200) {
+      if (response.status === 'success') {
         setSuccess(true);
         showSuccess('Working hours saved successfully');
+        fetchAvailabilityData();
       } else {
-        throw new Error('Failed to save working hours');
+        throw new Error(response.error?.message || 'Failed to save working hours');
       }
-    } catch (error: any) {
-      console.error('Error saving working hours:', error);
-      setError('Failed to save working hours. Please try again.');
-      showError('Failed to save working hours');
+    } catch (err) {
+      handleError(err);
     } finally {
       setLoading(false);
     }
@@ -192,6 +212,8 @@ export default function ProviderAvailabilityPage() {
   
   // Add new custom availability block
   const handleAddBlock = async () => {
+    if (!isValidTimeBlock()) return;
+
     try {
       setLoading(true);
       
@@ -201,13 +223,13 @@ export default function ProviderAvailabilityPage() {
         id: timeBlockId,
       };
       
-      const response = await ApiClient.getInstance().addProviderAvailabilityBlock(newTimeBlock);
+      const response = await providerClient.addAvailabilityBlock(newTimeBlock);
       
-      if (response.status === 200 || response.status === 201) {
-        const data = await response.data;
+      if (response.status === 'success') {
+        const data = response.data;
         
         // Use the ID from the API response if available
-        const blockWithServerId = data.data && data.data.id ? { ...newTimeBlock, id: data.data.id } : newTimeBlock;
+        const blockWithServerId = data && data.id ? { ...newTimeBlock, id: data.id } : newTimeBlock;
         
         setAvailabilityBlocks([
           ...availabilityBlocks,
@@ -226,11 +248,10 @@ export default function ProviderAvailabilityPage() {
         
         showSuccess('Availability block added successfully');
       } else {
-        throw new Error('Failed to add availability block');
+        throw new Error(response.error?.message || 'Failed to add availability block');
       }
-    } catch (error: any) {
-      console.error('Error adding availability block:', error);
-      showError('Failed to add availability block');
+    } catch (err) {
+      handleError(err);
     } finally {
       setLoading(false);
     }
@@ -241,17 +262,16 @@ export default function ProviderAvailabilityPage() {
     try {
       setLoading(true);
       
-      const response = await ApiClient.getInstance().removeProviderAvailabilityBlock(id);
+      const response = await providerClient.removeAvailabilityBlock(id);
       
-      if (response.status === 200) {
+      if (response.status === 'success') {
         setAvailabilityBlocks(availabilityBlocks.filter(block => block.id !== id));
         showSuccess('Availability block removed successfully');
       } else {
-        throw new Error('Failed to remove availability block');
+        throw new Error(response.error?.message || 'Failed to remove availability block');
       }
-    } catch (error: any) {
-      console.error('Error removing availability block:', error);
-      showError('Failed to remove availability block');
+    } catch (err) {
+      handleError(err);
     } finally {
       setLoading(false);
     }
@@ -259,6 +279,8 @@ export default function ProviderAvailabilityPage() {
   
   // Add new blocked time
   const handleAddBlockedTime = async () => {
+    if (!isValidBlockedTime()) return;
+
     try {
       setLoading(true);
       
@@ -268,13 +290,13 @@ export default function ProviderAvailabilityPage() {
         id: blockedTimeId,
       };
       
-      const response = await ApiClient.getInstance().addProviderBlockedTime(newBlockedPeriod);
+      const response = await providerClient.addBlockedTime(newBlockedPeriod);
       
-      if (response.status === 200 || response.status === 201) {
-        const data = await response.data;
+      if (response.status === 'success') {
+        const data = response.data;
         
         // Use the ID from the API response if available
-        const blockedTimeWithServerId = data.data && data.data.id ? { ...newBlockedPeriod, id: data.data.id } : newBlockedPeriod;
+        const blockedTimeWithServerId = data && data.id ? { ...newBlockedPeriod, id: data.id } : newBlockedPeriod;
         
         setBlockedTimes([
           ...blockedTimes,
@@ -291,11 +313,10 @@ export default function ProviderAvailabilityPage() {
         
         showSuccess('Blocked time period added successfully');
       } else {
-        throw new Error('Failed to add blocked time period');
+        throw new Error(response.error?.message || 'Failed to add blocked time period');
       }
-    } catch (error: any) {
-      console.error('Error adding blocked time period:', error);
-      showError('Failed to add blocked time period');
+    } catch (err) {
+      handleError(err);
     } finally {
       setLoading(false);
     }
@@ -306,17 +327,16 @@ export default function ProviderAvailabilityPage() {
     try {
       setLoading(true);
       
-      const response = await ApiClient.getInstance().removeProviderBlockedTime(id);
+      const response = await providerClient.removeBlockedTime(id);
       
-      if (response.status === 200) {
+      if (response.status === 'success') {
         setBlockedTimes(blockedTimes.filter(time => time.id !== id));
         showSuccess('Blocked time period removed successfully');
       } else {
-        throw new Error('Failed to remove blocked time period');
+        throw new Error(response.error?.message || 'Failed to remove blocked time period');
       }
-    } catch (error: any) {
-      console.error('Error removing blocked time period:', error);
-      showError('Failed to remove blocked time period');
+    } catch (err) {
+      handleError(err);
     } finally {
       setLoading(false);
     }
@@ -348,28 +368,11 @@ export default function ProviderAvailabilityPage() {
   // Save all availability settings
   const saveAllSettings = async () => {
     try {
-      setLoading(true);
-      
-      // Save working hours
-      const hoursResponse = await ApiClient.getInstance().saveProviderWorkingHours(regularHours);
-      
-      // Save availability blocks
-      const blocksResponse = await ApiClient.getInstance().saveProviderAvailabilityBlocks(availabilityBlocks);
-      
-      // Save blocked times
-      const blockedResponse = await ApiClient.getInstance().saveProviderBlockedTimes(blockedTimes);
-      
-      if (hoursResponse.status === 200 && blocksResponse.status === 200 && blockedResponse.status === 200) {
-        setSuccess(true);
-        showSuccess('All availability settings saved successfully');
-      } else {
-        throw new Error('Failed to save one or more availability settings');
-      }
-    } catch (error: any) {
-      console.error('Error saving availability settings:', error);
-      showError('Failed to save some availability settings');
-    } finally {
-      setLoading(false);
+      await withErrorHandling(async () => {
+        await handleSaveWorkingHours();
+      });
+    } catch (err) {
+      console.error('Error saving settings:', err);
     }
   };
   
@@ -837,6 +840,113 @@ export default function ProviderAvailabilityPage() {
           </Button>
         </Box>
       </Container>
+
+      {/* Add Time Block Dialog */}
+      <Dialog open={openBlockDialog} onClose={() => setOpenBlockDialog(false)}>
+        <DialogTitle>Add Time Block</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Day</InputLabel>
+                <Select
+                  value={newBlock.day}
+                  label="Day"
+                  onChange={(e) => setNewBlock({ ...newBlock, day: e.target.value })}
+                >
+                  <MenuItem value="MONDAY">Monday</MenuItem>
+                  <MenuItem value="TUESDAY">Tuesday</MenuItem>
+                  <MenuItem value="WEDNESDAY">Wednesday</MenuItem>
+                  <MenuItem value="THURSDAY">Thursday</MenuItem>
+                  <MenuItem value="FRIDAY">Friday</MenuItem>
+                  <MenuItem value="SATURDAY">Saturday</MenuItem>
+                  <MenuItem value="SUNDAY">Sunday</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth
+                type="time"
+                label="Start Time"
+                value={newBlock.startTime}
+                onChange={(e) => setNewBlock({ ...newBlock, startTime: e.target.value })}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth
+                type="time"
+                label="End Time"
+                value={newBlock.endTime}
+                onChange={(e) => setNewBlock({ ...newBlock, endTime: e.target.value })}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={newBlock.isRecurring}
+                    onChange={(e) => setNewBlock({ ...newBlock, isRecurring: e.target.checked })}
+                  />
+                }
+                label="Recurring"
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenBlockDialog(false)}>Cancel</Button>
+          <Button onClick={handleAddBlock} variant="contained">
+            Add
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Blocked Time Dialog */}
+      <Dialog open={openBlockedTimeDialog} onClose={() => setOpenBlockedTimeDialog(false)}>
+        <DialogTitle>Add Blocked Time</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Reason"
+                value={newBlockedTime.reason}
+                onChange={(e) => setNewBlockedTime({ ...newBlockedTime, reason: e.target.value })}
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth
+                type="date"
+                label="Start Date"
+                value={newBlockedTime.startDate}
+                onChange={(e) => setNewBlockedTime({ ...newBlockedTime, startDate: e.target.value })}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth
+                type="date"
+                label="End Date"
+                value={newBlockedTime.endDate}
+                onChange={(e) => setNewBlockedTime({ ...newBlockedTime, endDate: e.target.value })}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenBlockedTimeDialog(false)}>Cancel</Button>
+          <Button onClick={handleAddBlockedTime} variant="contained">
+            Add
+          </Button>
+        </DialogActions>
+      </Dialog>
     </LocalizationProvider>
   );
 } 

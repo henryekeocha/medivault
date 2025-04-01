@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Typography,
@@ -24,10 +24,12 @@ import {
 import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
-import { ApiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
+import { ClerkAuthService } from '@/lib/clerk/auth-service';
+import { useUser } from '@clerk/nextjs';
 
 // Extend the ApiClient interface to include the missing method
-declare module '@/lib/api/client' {
+declare module '@/lib/api/baseClient' {
   interface ApiClient {
     updatePatientSettings(settings: any): Promise<{
       status: string;
@@ -40,15 +42,15 @@ declare module '@/lib/api/client' {
 export default function PatientSettingsPage() { 
   // Personal Information
   const [personalInfo, setPersonalInfo] = useState({
-    firstName: 'John',
-    lastName: 'Doe',
-    dateOfBirth: '1990-01-01',
-    phone: '(555) 123-4567',
-    email: 'john.doe@example.com',
+    firstName: '',
+    lastName: '',
+    dateOfBirth: '',
+    phone: '',
+    email: '',
     emergencyContact: {
-      name: 'Jane Doe',
-      relationship: 'Spouse',
-      phone: '(555) 987-6543',
+      name: '',
+      relationship: '',
+      phone: '',
     },
   });
 
@@ -78,7 +80,113 @@ export default function PatientSettingsPage() {
   });
 
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const { handleError, withErrorHandling, loading, error, clearErrors } = useErrorHandler();
+  const { handleError, withErrorHandling, loading, error, clearErrors } = useErrorHandler({
+    context: 'Patient Settings',
+    showToastByDefault: true
+  });
+
+  // MFA functionality
+  const [security, setSecurity] = useState({
+    mfaEnabled: false,
+    mfaMethod: 'authenticator', // 'authenticator' or 'sms'
+  });
+  const [mfaSetup, setMfaSetup] = useState({
+    qrCode: '',
+    backupCodes: [] as string[],
+    isSetupComplete: false,
+  });
+  const { user } = useUser();
+
+  // Fetch settings on component mount
+  useEffect(() => {
+    const fetchSettings = async () => {
+      const response = await patientClient.getSettings();
+      if (response.status === 'success' && response.data) {
+        const settings = response.data;
+        setPersonalInfo(settings.personalInfo);
+        setPrivacy(settings.privacy);
+        setNotifications(settings.notifications);
+        setCommunication(settings.communication);
+        
+        // Check MFA status
+        if (user) {
+          const mfaStatus = await ClerkAuthService.getMFAStatus();
+          setSecurity(prev => ({
+            ...prev,
+            mfaEnabled: mfaStatus.enabled || false,
+            mfaMethod: mfaStatus.strategy || 'authenticator',
+          }));
+        }
+      } else {
+        throw new Error(response.error?.message || 'Failed to load settings');
+      }
+    };
+
+    withErrorHandling(fetchSettings).catch((error: Error) => {
+      console.error('Error loading settings:', error);
+    });
+  }, [withErrorHandling, user]);
+
+  // Handle MFA setup
+  const handleMfaSetup = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.setupMFA('authenticator');
+      
+      if (result.success && result.qrCode && result.backupCodes) {
+        setMfaSetup({
+          qrCode: result.qrCode,
+          backupCodes: result.backupCodes,
+          isSetupComplete: false,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to setup MFA');
+      }
+    } catch (error) {
+      handleError(error as Error);
+    }
+  };
+
+  // Handle MFA verification
+  const handleMfaVerification = async (code: string) => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.verifyMFA(code);
+      
+      if (result.success) {
+        setSecurity(prev => ({ ...prev, mfaEnabled: true }));
+        setMfaSetup(prev => ({ ...prev, isSetupComplete: true }));
+      } else {
+        throw new Error('Invalid verification code');
+      }
+    } catch (error) {
+      handleError(error as Error);
+    }
+  };
+
+  // Handle MFA disable
+  const handleMfaDisable = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.disableMFA();
+      
+      if (result.success) {
+        setSecurity(prev => ({ ...prev, mfaEnabled: false }));
+        setMfaSetup({
+          qrCode: '',
+          backupCodes: [],
+          isSetupComplete: false,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to disable MFA');
+      }
+    } catch (error) {
+      handleError(error as Error);
+    }
+  };
 
   // Define the function that will be wrapped by withErrorHandling
   const saveFn = async () => {
@@ -90,10 +198,7 @@ export default function PatientSettingsPage() {
       communication
     };
 
-    // API call to save settings
-    const apiClient = ApiClient.getInstance();
-    const response = await apiClient.updatePatientSettings(settingsData);
-
+    const response = await patientClient.updateSettings(settingsData);
     if (response.status === 'success') {
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -108,14 +213,12 @@ export default function PatientSettingsPage() {
     successMessage: 'Settings saved successfully'
   });
 
-  // Create a proper event handler for the retry button
   const handleRetry = async (e: React.MouseEvent) => {
     e.preventDefault();
     clearErrors();
     try {
       await handleSave();
     } catch (error: unknown) {
-      // Error is already handled by withErrorHandling
       console.error("Error in retry:", error);
     }
   };
@@ -125,7 +228,6 @@ export default function PatientSettingsPage() {
     try {
       await handleSave();
     } catch (error: unknown) {
-      // Error is already handled by withErrorHandling
       console.error("Error in save:", error);
     }
   };
@@ -387,6 +489,75 @@ export default function PatientSettingsPage() {
                   </Select>
                 </FormControl>
               </Grid>
+            </Grid>
+          </Paper>
+        </Grid>
+
+        {/* Security Settings */}
+        <Grid item xs={12}>
+          <Paper sx={{ p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Security Settings
+            </Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={security.mfaEnabled}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          handleMfaSetup();
+                        } else {
+                          handleMfaDisable();
+                        }
+                      }}
+                    />
+                  }
+                  label="Enable Two-Factor Authentication"
+                />
+              </Grid>
+              
+              {security.mfaEnabled && !mfaSetup.isSetupComplete && (
+                <Grid item xs={12}>
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle1" gutterBottom>
+                      Scan this QR code with your authenticator app
+                    </Typography>
+                    {mfaSetup.qrCode && (
+                      <Box sx={{ my: 2 }}>
+                        <img src={mfaSetup.qrCode} alt="MFA QR Code" />
+                      </Box>
+                    )}
+                    <TextField
+                      fullWidth
+                      label="Enter Verification Code"
+                      onChange={(e) => handleMfaVerification(e.target.value)}
+                      sx={{ mt: 2 }}
+                    />
+                  </Box>
+                </Grid>
+              )}
+              
+              {security.mfaEnabled && mfaSetup.isSetupComplete && (
+                <Grid item xs={12}>
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle1" gutterBottom>
+                      Backup Codes
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Save these codes in a secure place. You can use them to access your account if you lose your authenticator device.
+                    </Typography>
+                    <Box sx={{ mt: 2 }}>
+                      {mfaSetup.backupCodes.map((code, index) => (
+                        <Typography key={index} variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {code}
+                        </Typography>
+                      ))}
+                    </Box>
+                  </Box>
+                </Grid>
+              )}
             </Grid>
           </Paper>
         </Grid>

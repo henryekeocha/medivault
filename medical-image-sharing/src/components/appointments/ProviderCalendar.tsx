@@ -36,11 +36,11 @@ import {
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, startOfWeek, startOfDay, endOfDay, addDays, addWeeks, subWeeks, isSameDay, parseISO, formatISO } from 'date-fns';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { AppointmentStatus } from '@prisma/client';
-import { Appointment, AppointmentResponse, UpdateAppointmentRequest, CreateAppointmentRequest } from '@/lib/api/types';
+import { Appointment, AppointmentResponse, UpdateAppointmentRequest, CreateAppointmentRequest, User } from '@/lib/api/types';
 import { toast } from 'react-hot-toast';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
 
@@ -86,8 +86,11 @@ export const ProviderCalendar: React.FC = () => {
   const [isLoadingPatients, setIsLoadingPatients] = useState(false);
   const [patientSearchError, setPatientSearchError] = useState<string | null>(null);
 
-  const { user } = useAuth();
-  const providerId = user?.id || '';
+  const { data: session } = useSession();
+  // Safely access provider ID, accounting for different session structures
+  const providerId = session?.user && ('id' in session.user) 
+    ? (session.user as any).id 
+    : '';
   const queryClient = useQueryClient();
   
   // Initialize error handler
@@ -130,26 +133,22 @@ export const ProviderCalendar: React.FC = () => {
   const { data: appointmentsResponse, isLoading, error: appointmentsError, refetch: refetchAppointments } = useQuery({
     queryKey: ['appointments', dateRange.start.toISOString(), dateRange.end.toISOString(), providerId],
     queryFn: async () => {
-      if (!providerId) return { data: { items: [] } };
+      if (!providerId) return { data: { data: [], pagination: { page: 1, limit: 10, total: 0, pages: 0 } } };
       
-      const response = await ApiClient.getInstance().getProviderAppointments(providerId, {
+      const response = await providerClient.getAppointments({
         startDate: dateRange.start.toISOString(),
         endDate: dateRange.end.toISOString(),
       });
-      
-      if (response.status !== 'success' || !response.data) {
-        throw new Error(response.error?.message || 'Failed to load appointments');
-      }
       
       return response;
     },
     enabled: !!providerId
   });
 
-  // Update appointment status mutation
+  // Update appointment mutation
   const updateAppointment = useMutation({
     mutationFn: (data: { id: string; updates: UpdateAppointmentRequest }) =>
-      ApiClient.getInstance().updateAppointment(data.id, data.updates),
+      providerClient.updateAppointment(data.id, data.updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
       toast.success('Appointment updated successfully');
@@ -162,8 +161,14 @@ export const ProviderCalendar: React.FC = () => {
   
   // Create new appointment mutation
   const createAppointment = useMutation({
-    mutationFn: (data: CreateAppointmentRequest) =>
-      ApiClient.getInstance().createAppointment(data),
+    mutationFn: (data: CreateAppointmentRequest) => {
+      // Ensure scheduledFor is a string
+      const appointmentData = {
+        ...data,
+        scheduledFor: data.scheduledFor instanceof Date ? formatISO(data.scheduledFor) : data.scheduledFor
+      };
+      return providerClient.createAppointment(appointmentData);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
       toast.success('Appointment created successfully');
@@ -183,27 +188,17 @@ export const ProviderCalendar: React.FC = () => {
     setPatientSearchError(null);
     
     try {
-      // Use the actual API to search for patients
-      const response = await ApiClient.getInstance().getUsers({ 
-        role: 'PATIENT',
+      const response = await providerClient.searchPatients({ 
+        query
       });
       
-      if (response.status === 'success' && response.data) {
+      if (response.data?.items) {
         // Map the response to the format expected by the component
-        // Filter by search query client-side
-        const patients = Array.isArray(response.data.data) ? response.data.data : [];
-        const filteredPatients = patients.filter(patient => 
-          patient.name?.toLowerCase().includes(query.toLowerCase()) || 
-          (patient.email && patient.email.toLowerCase().includes(query.toLowerCase()))
-        );
-        
-        const mappedPatients = filteredPatients.map((patient: any) => ({
+        const mappedPatients = response.data.items.map((patient: User) => ({
           id: patient.id,
-          name: patient.name || `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
+          name: patient.name || patient.id,
         }));
         setPatientOptions(mappedPatients);
-      } else {
-        throw new Error(response.error?.message || 'Failed to search for patients');
       }
     } catch (error) {
       console.error('Failed to search patients:', error);
@@ -225,7 +220,7 @@ export const ProviderCalendar: React.FC = () => {
     const endHour = WORKING_HOURS.end;
     const slotDuration = WORKING_HOURS.slotDuration;
 
-    const appointments = appointmentsResponse?.data?.items || [];
+    const appointments = appointmentsResponse?.data?.data || [];
 
     for (let hour = startHour; hour < endHour; hour++) {
       for (let minute = 0; minute < 60; minute += slotDuration) {
@@ -402,8 +397,10 @@ export const ProviderCalendar: React.FC = () => {
         onClose={() => setIsDialogOpen(false)}
         maxWidth="sm"
         fullWidth
+        aria-labelledby="appointment-dialog-title"
+        disableEnforceFocus
       >
-        <DialogTitle>
+        <DialogTitle id="appointment-dialog-title">
           {isCreating ? 'New Appointment' : 'Appointment Details'}
         </DialogTitle>
         <DialogContent>
@@ -596,6 +593,61 @@ export const ProviderCalendar: React.FC = () => {
     );
   };
 
+  const renderMonthView = () => {
+    const startDate = startOfWeek(selectedDate);
+    const dates = Array.from({ length: 28 }, (_, i) => addDays(startDate, i));
+
+    return (
+      <Grid container spacing={1}>
+        {dates.map((date) => (
+          <Grid item xs={12 / 7} key={date.toISOString()}>
+            <Paper
+              elevation={1}
+              sx={{
+                p: 1,
+                height: '100%',
+                bgcolor: isSameDay(date, new Date()) ? 'primary.light' : 'background.paper',
+                cursor: 'pointer',
+                '&:hover': {
+                  bgcolor: 'action.hover'
+                }
+              }}
+              onClick={() => {
+                setSelectedDate(date);
+                setView('day');
+              }}
+            >
+              <Typography variant="subtitle2" align="center">
+                {format(date, 'EEE')}
+              </Typography>
+              <Typography variant="h6" align="center">
+                {format(date, 'd')}
+              </Typography>
+              <Box>
+                {appointmentsResponse?.data?.data && appointmentsResponse.data.data.filter((apt: Appointment) => 
+                  isSameDay(new Date(apt.scheduledFor), date)
+                ).slice(0, 2).map((apt: Appointment) => (
+                  <Typography key={apt.id} variant="caption" noWrap>
+                    {format(new Date(apt.scheduledFor), 'HH:mm')} - {apt.patientName}
+                  </Typography>
+                ))}
+                {appointmentsResponse?.data?.data && appointmentsResponse.data.data.filter((apt: Appointment) => 
+                  isSameDay(new Date(apt.scheduledFor), date)
+                ).length > 2 && (
+                  <Typography variant="caption" color="text.secondary">
+                    + {appointmentsResponse?.data?.data && appointmentsResponse.data.data.filter((apt: Appointment) => 
+                      isSameDay(new Date(apt.scheduledFor), date)
+                    ).length - 2} more
+                  </Typography>
+                )}
+              </Box>
+            </Paper>
+          </Grid>
+        ))}
+      </Grid>
+    );
+  };
+
   if (isLoading) {
     return <LoadingState message="Loading appointments..." fullScreen />;
   }
@@ -706,50 +758,7 @@ export const ProviderCalendar: React.FC = () => {
             );
           })
         ) : (
-          // Month view - 4 weeks (28 days) in a grid
-          [...Array(28)].map((_, index) => {
-            const date = addDays(dateRange.start, index);
-            // For month view, we'll just show a condensed version
-            return (
-              <Grid item xs={6} sm={4} md={3} key={date.toISOString()}>
-                <Paper 
-                  sx={{ 
-                    p: 1, 
-                    height: '100px', 
-                    overflow: 'hidden',
-                    cursor: 'pointer',
-                    '&:hover': { bgcolor: 'action.hover' }
-                  }}
-                  onClick={() => {
-                    setSelectedDate(date);
-                    setView('day');
-                  }}
-                >
-                  <Typography variant="subtitle2" gutterBottom>
-                    {format(date, 'EEE, MMM d')}
-                  </Typography>
-                  <Box>
-                    {appointmentsResponse?.data?.items && appointmentsResponse.data.items.filter((apt: Appointment) => 
-                      isSameDay(new Date(apt.scheduledFor), date)
-                    ).slice(0, 2).map((apt: Appointment) => (
-                      <Typography key={apt.id} variant="caption" noWrap display="block">
-                        {format(new Date(apt.scheduledFor), 'HH:mm')} - {apt.patientName || 'Patient'}
-                      </Typography>
-                    ))}
-                    {appointmentsResponse?.data?.items && appointmentsResponse.data.items.filter((apt: Appointment) => 
-                      isSameDay(new Date(apt.scheduledFor), date)
-                    ).length > 2 && (
-                      <Typography variant="caption" color="text.secondary">
-                        + {appointmentsResponse?.data?.items && appointmentsResponse.data.items.filter((apt: Appointment) => 
-                          isSameDay(new Date(apt.scheduledFor), date)
-                        ).length - 2} more
-                      </Typography>
-                    )}
-                  </Box>
-                </Paper>
-              </Grid>
-            );
-          })
+          renderMonthView()
         )}
       </Grid>
 

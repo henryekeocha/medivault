@@ -1,6 +1,6 @@
 import { EmailService } from './email.service.js';
 import { NotificationType } from '@prisma/client';
-import { CustomNotificationTypes } from '../types/notification.js';
+import { CustomNotificationTypes, ExtendedNotificationTypes, mapToPrismaNotificationType } from '../types/notification.js';
 import { AppError } from '../utils/appError.js';
 import { format } from 'date-fns';
 export class NotificationService {
@@ -18,16 +18,18 @@ export class NotificationService {
             let notificationType = type;
             let updatedMetadata = metadata || {};
             if (!Object.values(NotificationType).includes(type)) {
-                notificationType = NotificationType.SYSTEM_UPDATE;
+                notificationType = ExtendedNotificationTypes.SYSTEM_UPDATE;
                 updatedMetadata = {
                     ...updatedMetadata,
                     extendedType: type
                 };
             }
+            // Map the extended type to a Prisma type
+            const prismaType = mapToPrismaNotificationType(type);
             const notification = await this.prisma.notification.create({
                 data: {
                     userId,
-                    type: notificationType,
+                    type: prismaType,
                     content,
                     metadata: updatedMetadata ? updatedMetadata : undefined
                 }
@@ -114,35 +116,35 @@ export class NotificationService {
     }
     getNotificationTitle(type) {
         switch (type) {
-            case NotificationType.NEW_SHARE:
+            case ExtendedNotificationTypes.NEW_SHARE:
                 return 'New Share';
-            case NotificationType.NEW_MESSAGE:
+            case ExtendedNotificationTypes.NEW_MESSAGE:
                 return 'New Message';
-            case NotificationType.ANNOTATION_ADDED:
+            case ExtendedNotificationTypes.ANNOTATION_ADDED:
                 return 'Annotation Added';
-            case NotificationType.SECURITY_ALERT:
+            case ExtendedNotificationTypes.SECURITY_ALERT:
                 return 'Security Alert';
-            case NotificationType.SYSTEM_UPDATE:
+            case ExtendedNotificationTypes.SYSTEM_UPDATE:
                 return 'System Update';
-            case NotificationType.UPLOAD_COMPLETE:
+            case ExtendedNotificationTypes.UPLOAD_COMPLETE:
                 return 'Upload Complete';
-            case NotificationType.APPOINTMENT_CREATED:
+            case ExtendedNotificationTypes.APPOINTMENT_CREATED:
                 return 'Appointment Created';
-            case NotificationType.FILE_SHARED:
+            case ExtendedNotificationTypes.FILE_SHARED:
                 return 'File Shared';
-            case NotificationType.FILE_DOWNLOADED:
+            case ExtendedNotificationTypes.FILE_DOWNLOADED:
                 return 'File Downloaded';
-            case NotificationType.FILE_DELETED:
+            case ExtendedNotificationTypes.FILE_DELETED:
                 return 'File Deleted';
             case CustomNotificationTypes.FILE_ERROR:
                 return 'File Processing Error';
             case CustomNotificationTypes.APPOINTMENT_SCHEDULED:
                 return 'Appointment Scheduled';
-            case NotificationType.APPOINTMENT_CANCELLED:
+            case ExtendedNotificationTypes.APPOINTMENT_CANCELLED:
                 return 'Appointment Cancelled';
             case CustomNotificationTypes.APPOINTMENT_REMINDER:
                 return 'Appointment Reminder';
-            case NotificationType.APPOINTMENT_NO_SHOW:
+            case ExtendedNotificationTypes.APPOINTMENT_NO_SHOW:
                 return 'Appointment No Show';
             default:
                 return 'Notification';
@@ -150,31 +152,31 @@ export class NotificationService {
     }
     // Convenience methods for common notifications
     async notifyNewShare(userId, sharedBy, imageId) {
-        return this.createNotification(userId, NotificationType.NEW_SHARE, `A new image has been shared with you by ${sharedBy}`, { imageId });
+        return this.createNotification(userId, ExtendedNotificationTypes.NEW_SHARE, `A new image has been shared with you by ${sharedBy}`, { imageId });
     }
     async notifyNewMessage(userId, senderId, messagePreview) {
-        return this.createNotification(userId, NotificationType.NEW_MESSAGE, `New message: ${messagePreview}`, { senderId });
+        return this.createNotification(userId, ExtendedNotificationTypes.NEW_MESSAGE, `New message: ${messagePreview}`, { senderId });
     }
     async notifyAnnotationAdded(userId, imageId, addedBy) {
-        return this.createNotification(userId, NotificationType.ANNOTATION_ADDED, `New annotation added by ${addedBy}`, { imageId });
+        return this.createNotification(userId, ExtendedNotificationTypes.ANNOTATION_ADDED, `New annotation added by ${addedBy}`, { imageId });
     }
     async notifySecurityAlert(userId, alertType, details) {
-        return this.createNotification(userId, NotificationType.SECURITY_ALERT, details, { alertType });
+        return this.createNotification(userId, ExtendedNotificationTypes.SECURITY_ALERT, details, { alertType });
     }
     async notifySystemUpdate(userId, updateType, details) {
-        return this.createNotification(userId, NotificationType.SYSTEM_UPDATE, details, { updateType });
+        return this.createNotification(userId, ExtendedNotificationTypes.SYSTEM_UPDATE, details, { updateType });
     }
     async notifyFileUploadComplete(userId, fileId, fileName) {
-        return this.createNotification(userId, NotificationType.UPLOAD_COMPLETE, `File "${fileName}" has been uploaded successfully`, { fileId });
+        return this.createNotification(userId, ExtendedNotificationTypes.UPLOAD_COMPLETE, `File "${fileName}" has been uploaded successfully`, { fileId });
     }
     async notifyFileShared(userId, sharedBy, fileId, fileName) {
-        return this.createNotification(userId, NotificationType.NEW_SHARE, `File "${fileName}" has been shared with you by ${sharedBy}`, { fileId });
+        return this.createNotification(userId, ExtendedNotificationTypes.NEW_SHARE, `File "${fileName}" has been shared with you by ${sharedBy}`, { fileId });
     }
     async notifyFileDownloaded(userId, fileId, fileName, downloadedBy) {
-        return this.createNotification(userId, NotificationType.FILE_DOWNLOADED, `File "${fileName}" was downloaded by ${downloadedBy}`, { fileId });
+        return this.createNotification(userId, ExtendedNotificationTypes.FILE_DOWNLOADED, `File "${fileName}" was downloaded by ${downloadedBy}`, { fileId });
     }
     async notifyFileDeleted(userId, fileId, fileName, deletedBy) {
-        return this.createNotification(userId, NotificationType.FILE_DELETED, `File "${fileName}" was deleted by ${deletedBy}`, { fileId });
+        return this.createNotification(userId, ExtendedNotificationTypes.FILE_DELETED, `File "${fileName}" was deleted by ${deletedBy}`, { fileId });
     }
     async notifyFileProcessingError(userId, fileId, fileName, error) {
         return this.createNotification(userId, CustomNotificationTypes.FILE_ERROR, `Error processing file "${fileName}": ${error}`, { fileId });
@@ -190,9 +192,9 @@ export class NotificationService {
         const date = appointment.startTime.toLocaleDateString();
         const time = appointment.startTime.toLocaleTimeString();
         // Notify patient
-        await this.createNotification(appointment.patientId, NotificationType.APPOINTMENT_CREATED, `New appointment scheduled with Dr. ${appointment.doctor.name} on ${date} at ${time}`, { appointmentId: appointment.id, date: `${date} ${time}` });
+        await this.createNotification(appointment.patientId, ExtendedNotificationTypes.APPOINTMENT_CREATED, `New appointment scheduled with Dr. ${appointment.doctor.name} on ${date} at ${time}`, { appointmentId: appointment.id, date: `${date} ${time}` });
         // Notify doctor
-        await this.createNotification(appointment.doctorId, NotificationType.APPOINTMENT_CREATED, `New appointment scheduled with ${appointment.patient.name} on ${date} at ${time}`, { appointmentId: appointment.id, date: `${date} ${time}` });
+        await this.createNotification(appointment.doctorId, ExtendedNotificationTypes.APPOINTMENT_CREATED, `New appointment scheduled with ${appointment.patient.name} on ${date} at ${time}`, { appointmentId: appointment.id, date: `${date} ${time}` });
     }
     async sendAppointmentCompleted(appointment) {
         // Check if we need to fetch the full appointment with users
@@ -204,8 +206,8 @@ export class NotificationService {
         const patientMessage = `Your appointment with Dr. ${appointment.doctor.name} on ${format(appointment.startTime, 'PPP')} has been marked as completed.`;
         const doctorMessage = `Your appointment with ${appointment.patient.name} on ${format(appointment.startTime, 'PPP')} has been marked as completed.`;
         await Promise.all([
-            this.createNotification(appointment.patientId, NotificationType.APPOINTMENT_COMPLETED, patientMessage),
-            this.createNotification(appointment.doctorId, NotificationType.APPOINTMENT_COMPLETED, doctorMessage)
+            this.createNotification(appointment.patientId, ExtendedNotificationTypes.APPOINTMENT_COMPLETED, patientMessage),
+            this.createNotification(appointment.doctorId, ExtendedNotificationTypes.APPOINTMENT_COMPLETED, doctorMessage)
         ]);
     }
     async sendAppointmentCancelled(appointment) {
@@ -218,8 +220,8 @@ export class NotificationService {
         const patientMessage = `Your appointment with Dr. ${appointment.doctor.name} on ${format(appointment.startTime, 'PPP')} has been cancelled.`;
         const doctorMessage = `Your appointment with ${appointment.patient.name} on ${format(appointment.startTime, 'PPP')} has been cancelled.`;
         await Promise.all([
-            this.createNotification(appointment.patientId, NotificationType.APPOINTMENT_CANCELLED, patientMessage),
-            this.createNotification(appointment.doctorId, NotificationType.APPOINTMENT_CANCELLED, doctorMessage)
+            this.createNotification(appointment.patientId, ExtendedNotificationTypes.APPOINTMENT_CANCELLED, patientMessage),
+            this.createNotification(appointment.doctorId, ExtendedNotificationTypes.APPOINTMENT_CANCELLED, doctorMessage)
         ]);
     }
     async sendAppointmentNoShow(appointment) {
@@ -232,8 +234,8 @@ export class NotificationService {
         const patientMessage = `You missed your appointment with Dr. ${appointment.doctor.name} on ${format(appointment.startTime, 'PPP')}.`;
         const doctorMessage = `${appointment.patient.name} missed their appointment scheduled for ${format(appointment.startTime, 'PPP')}.`;
         await Promise.all([
-            this.createNotification(appointment.patientId, NotificationType.APPOINTMENT_NO_SHOW, patientMessage),
-            this.createNotification(appointment.doctorId, NotificationType.APPOINTMENT_NO_SHOW, doctorMessage)
+            this.createNotification(appointment.patientId, ExtendedNotificationTypes.APPOINTMENT_NO_SHOW, patientMessage),
+            this.createNotification(appointment.doctorId, ExtendedNotificationTypes.APPOINTMENT_NO_SHOW, doctorMessage)
         ]);
     }
     async sendAppointmentReminder(appointment) {

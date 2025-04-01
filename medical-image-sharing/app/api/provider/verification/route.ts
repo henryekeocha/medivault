@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
+import { auth } from '@clerk/nextjs/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
-import { authOptions, UserRole } from '@/lib/auth/auth-options';
+import { Role } from '@prisma/client';
 import { getErrorResponse } from '@/lib/api/error-handler';
 import { verifyLicense } from '@/lib/verification/license-verification';
 import { getPresignedUrl } from '@/lib/aws/s3-utils';
@@ -34,17 +34,22 @@ type ProviderVerificationInput = z.infer<typeof ProviderVerificationSchema>;
 export async function GET(req: NextRequest) {
   try {
     // Get the authenticated user
-    const session = await getServerSession(authOptions);
+    const { userId } = await auth();
     
-    if (!session || !session.user) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
+
+    // Get the user from the database to check role
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
     
-    // Check if the user is a provider
-    if (session.user.role !== UserRole.PROVIDER) {
+    if (!user || user.role !== Role.PROVIDER) {
       return NextResponse.json(
         { error: 'Only providers can access this endpoint' },
         { status: 403 }
@@ -53,7 +58,7 @@ export async function GET(req: NextRequest) {
     
     // Get the provider's verification from the database
     const verification = await prisma.providerVerification.findUnique({
-      where: { providerId: session.user.id },
+      where: { providerId: user.id },
     });
     
     // If no verification exists, return success with null data
@@ -95,17 +100,22 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     // Get the authenticated user
-    const session = await getServerSession(authOptions);
+    const { userId } = await auth();
     
-    if (!session || !session.user) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
+
+    // Get the user from the database to check role
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
     
-    // Check if the user is a provider
-    if (session.user.role !== UserRole.PROVIDER) {
+    if (!user || user.role !== Role.PROVIDER) {
       return NextResponse.json(
         { error: 'Only providers can access this endpoint' },
         { status: 403 }
@@ -118,7 +128,7 @@ export async function POST(req: NextRequest) {
     
     // Check if provider already has a pending verification
     const existingVerification = await prisma.providerVerification.findUnique({
-      where: { providerId: session.user.id },
+      where: { providerId: user.id },
     });
     
     if (existingVerification && existingVerification.verificationStatus === VerificationStatus.PENDING) {
@@ -141,7 +151,7 @@ export async function POST(req: NextRequest) {
     
     // Create or update the verification
     const verification = await prisma.providerVerification.upsert({
-      where: { providerId: session.user.id },
+      where: { providerId: user.id },
       update: {
         licenseNumber: validatedData.licenseNumber,
         licenseState: validatedData.licenseState,
@@ -156,7 +166,7 @@ export async function POST(req: NextRequest) {
         rejectedAt: null,
       },
       create: {
-        providerId: session.user.id,
+        providerId: user.id,
         licenseNumber: validatedData.licenseNumber,
         licenseState: validatedData.licenseState,
         licenseExpiryDate: validatedData.licenseExpiryDate,

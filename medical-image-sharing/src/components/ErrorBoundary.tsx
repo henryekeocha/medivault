@@ -10,7 +10,7 @@ import {
   Alert,
   AlertTitle,
 } from '@mui/material';
-import { apiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api';
 import { ErrorLogRequest } from '@/lib/api/types';
 
 interface Props {
@@ -58,7 +58,7 @@ class ErrorBoundary extends Component<Props, State> {
       }
     };
 
-    apiClient.createAuditLog({
+    adminClient.createAuditLog({
       action: 'ERROR',
       resourceType: 'SYSTEM',
       resourceId: 'error-boundary',

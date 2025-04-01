@@ -5,6 +5,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { Box, Typography, Container, Paper, Grid, Button, Chip } from '@mui/material';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'react-hot-toast';
+import { patientClient } from '@/lib/api/patientClient';
 
 interface Appointment {
   id: string;
@@ -27,33 +28,33 @@ interface Appointment {
 export default function PatientAppointmentDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const appointmentId = params.id as string;
+  const appointmentId = params?.id as string;
 
   const { data: appointment, isLoading } = useQuery<Appointment>({
     queryKey: ['appointment', appointmentId],
     queryFn: async () => {
-      const response = await fetch(`/api/appointments/${appointmentId}`);
-      if (!response.ok) throw new Error('Failed to fetch appointment');
-      return response.json();
+      const response = await patientClient.getAppointment(appointmentId);
+      if (response.status !== 'success' || !response.data) {
+        throw new Error('Failed to fetch appointment');
+      }
+      return response.data;
     },
   });
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch(`/api/appointments/${appointmentId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'cancelled' }),
-      });
-      if (!response.ok) throw new Error('Failed to cancel appointment');
-      return response.json();
+      const response = await patientClient.updateAppointment(appointmentId, { status: 'cancelled' });
+      if (response.status !== 'success') {
+        throw new Error('Failed to cancel appointment');
+      }
+      return response.data;
     },
     onSuccess: () => {
       toast.success('Appointment cancelled successfully');
       router.refresh();
     },
     onError: (error) => {
-      toast.error(error.message);
+      toast.error(error instanceof Error ? error.message : 'Failed to cancel appointment');
     },
   });
 

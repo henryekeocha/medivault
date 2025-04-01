@@ -28,7 +28,7 @@ import {
   History as HistoryIcon
 } from '@mui/icons-material';
 import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { ImageAnalysis as ImageAnalysisType, AnalysisResult, AnalysisFinding } from '@/lib/api/types';
 
 type TimelineDotColor = TimelineDotProps['color'];
@@ -51,7 +51,7 @@ export const ImageAnalysis: React.FC<Props> = ({ imageId, onAnalysisComplete }) 
   } = useQuery({
     queryKey: ['analysis', imageId],
     queryFn: async () => {
-      const response = await apiClient.analyzeImage({
+      const response = await providerClient.analyzeImage({
         imageId,
         type: 'DIAGNOSTIC',
       });
@@ -81,7 +81,7 @@ export const ImageAnalysis: React.FC<Props> = ({ imageId, onAnalysisComplete }) 
   } = useQuery({
     queryKey: ['analysis-history', imageId],
     queryFn: async () => {
-      const response = await apiClient.getAnalyses({ imageId });
+      const response = await providerClient.getAnalyses({ imageId });
       return response.data.data; // Access the data array from PaginatedResponse
     },
     enabled: showHistory

@@ -25,8 +25,10 @@ import {
    SelectChangeEvent,
 } from '@mui/material';
 import { format } from 'date-fns';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { patientClient } from '@/lib/api/patientClient';
+import { providerClient } from '@/lib/api/providerClient';
+import { useSession } from 'next-auth/react';
+import { AppointmentStatus } from '@prisma/client';
 
 // Mapping for appointment status display
 const statusMap: Record<string, { label: string; color: 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' }> = {
@@ -77,7 +79,7 @@ export default function AppointmentDetail({
   onClose,
   onStatusChange,
 }: AppointmentDetailProps) {
-  const { user } = useAuth();
+  const { data: session } = useSession();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -100,8 +102,12 @@ export default function AppointmentDetail({
       setLoading(true);
       setError('');
       
-      const apiClient = ApiClient.getInstance();
-      await apiClient.updateAppointmentStatus(appointment.id, newStatus);
+      // Use the appropriate client based on user role
+      if (userRole === 'PATIENT') {
+        await patientClient.updateAppointment(appointment.id, { status: newStatus as AppointmentStatus });
+      } else {
+        await providerClient.updateAppointment(appointment.id, { status: newStatus as AppointmentStatus });
+      }
       
       setSuccess(`Appointment status updated to ${statusMap[newStatus]?.label || newStatus}`);
       
@@ -124,8 +130,12 @@ export default function AppointmentDetail({
       setLoading(true);
       setError('');
       
-      const apiClient = ApiClient.getInstance();
-      await apiClient.updateAppointmentStatus(appointment.id, 'CANCELLED');
+      // Use the appropriate client based on user role
+      if (userRole === 'PATIENT') {
+        await patientClient.updateAppointment(appointment.id, { status: 'CANCELLED' });
+      } else {
+        await providerClient.updateAppointment(appointment.id, { status: 'CANCELLED' });
+      }
       
       setSuccess('Appointment has been cancelled');
       
@@ -150,8 +160,14 @@ export default function AppointmentDetail({
   // Check if user can edit the appointment
   const canEdit = () => {
     if (userRole === 'ADMIN') return true;
-    if (userRole === 'PROVIDER' && user?.id === appointment.providerId) return true;
-    if (userRole === 'PATIENT' && user?.id === appointment.patientId) {
+    
+    // Safe access to user ID, accounting for different session structures
+    const userId = session?.user && ('id' in session.user) 
+      ? (session.user as any).id 
+      : undefined;
+    
+    if (userRole === 'PROVIDER' && userId === appointment.providerId) return true;
+    if (userRole === 'PATIENT' && userId === appointment.patientId) {
       return ['SCHEDULED', 'CONFIRMED'].includes(appointment.status);
     }
     return false;
@@ -313,8 +329,13 @@ export default function AppointmentDetail({
       </CardContent>
       
       {/* Status Update Dialog */}
-      <Dialog open={statusDialogOpen} onClose={() => setStatusDialogOpen(false)}>
-        <DialogTitle>Update Appointment Status</DialogTitle>
+      <Dialog 
+        open={statusDialogOpen} 
+        onClose={() => setStatusDialogOpen(false)}
+        aria-labelledby="status-update-dialog-title"
+        disableEnforceFocus
+      >
+        <DialogTitle id="status-update-dialog-title">Update Appointment Status</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
             Select the new status for this appointment.
@@ -347,8 +368,13 @@ export default function AppointmentDetail({
       </Dialog>
       
       {/* Cancel Appointment Dialog */}
-      <Dialog open={cancelDialogOpen} onClose={() => setCancelDialogOpen(false)}>
-        <DialogTitle>Cancel Appointment</DialogTitle>
+      <Dialog 
+        open={cancelDialogOpen} 
+        onClose={() => setCancelDialogOpen(false)}
+        aria-labelledby="cancel-appointment-dialog-title"
+        disableEnforceFocus
+      >
+        <DialogTitle id="cancel-appointment-dialog-title">Cancel Appointment</DialogTitle>
         <DialogContent>
           <DialogContentText>
             Are you sure you want to cancel this appointment? This action cannot be undone.

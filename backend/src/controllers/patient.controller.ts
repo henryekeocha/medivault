@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { Role } from '@prisma/client';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AuthenticatedRequest } from '../types/auth.js';

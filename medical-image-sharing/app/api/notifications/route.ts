@@ -1,29 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/auth-options';
+import { auth } from '@clerk/nextjs/server';
 import { cookies } from 'next/headers';
 
 export async function GET(req: NextRequest) {
   try {
-    // Get session from NextAuth
-    const session = await getServerSession(authOptions);
+    // Get auth from Clerk
+    const session = await auth();
     
-    // Get token from session or Authorization header
-    let token = session?.accessToken;
-    
-    // If no token in session, check Authorization header
-    if (!token) {
-      const authHeader = req.headers.get('Authorization');
-      if (authHeader?.startsWith('Bearer ')) {
-        token = authHeader.split(' ')[1];
-      }
+    // If no user ID, return unauthorized with empty data
+    if (!session.userId) {
+      console.warn('No authenticated user found for notifications request');
+      return NextResponse.json({
+        status: 'success',
+        data: [] // Return empty array for better UI handling
+      });
     }
-    
-    // If still no token, try from cookies
-    if (!token) {
-      const cookieStore = await cookies();
-      token = cookieStore.get('token')?.value;
-    }
+
+    // Get token from Clerk
+    const token = await session.getToken();
     
     // If no token found, return unauthorized with empty data
     if (!token) {

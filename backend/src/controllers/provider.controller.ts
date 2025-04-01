@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { Role } from '@prisma/client';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AuthenticatedRequest } from '../types/auth.js';
@@ -122,7 +122,7 @@ class ProviderController {
         }
       }),
       ...(startDate && {
-        startTime: {
+        datetime: {
           gte: new Date(startDate as string),
           ...(endDate && { lte: new Date(endDate as string) })
         }
@@ -144,7 +144,7 @@ class ProviderController {
         skip: (Number(page) - 1) * Number(limit),
         take: Number(limit),
         orderBy: {
-          startTime: 'desc'
+          datetime: 'desc'
         }
       }),
       prisma.appointment.count({ where })
@@ -171,8 +171,7 @@ class ProviderController {
       data: {
         doctorId: req.user.id,
         patientId,
-        startTime: new Date(startTime),
-        endTime: new Date(endTime),
+        datetime: new Date(startTime),
         notes,
         status: 'SCHEDULED'
       },
@@ -497,6 +496,62 @@ class ProviderController {
     res.status(200).json({
       status: 'success',
       data: updatedSettings.workingHours
+    });
+  });
+
+  // Get all providers (provider directory)
+  getAllProviders = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+    const { page = '1', limit = '10', search, specialty } = req.query;
+    
+    const where: any = {
+      role: Role.PROVIDER,
+    };
+    
+    // Add search filter if provided
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' as any } },
+        { email: { contains: search as string, mode: 'insensitive' as any } },
+      ];
+    }
+    
+    // Add specialty filter if provided
+    if (specialty) {
+      where.specialty = { contains: specialty as string, mode: 'insensitive' as any };
+    }
+    
+    const [providers, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          specialty: true,
+          createdAt: true,
+          isActive: true
+        },
+        skip: (Number(page) - 1) * Number(limit),
+        take: Number(limit),
+        orderBy: {
+          name: 'asc'
+        }
+      }),
+      prisma.user.count({ where })
+    ]);
+    
+    res.status(200).json({
+      status: 'success',
+      data: {
+        data: providers,
+        totalCount: total,
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          total
+        }
+      }
     });
   });
 }

@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import bcrypt from 'bcryptjs';
 import { Role } from '@prisma/client';
 import { fileURLToPath } from 'url';

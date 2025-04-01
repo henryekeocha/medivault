@@ -1,6 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import { AppError } from '../utils/appError.js';
-const prisma = new PrismaClient();
+import prisma from '../lib/prisma.js';
 export const getNotifications = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -12,9 +11,13 @@ export const getNotifications = async (req, res) => {
                 createdAt: 'desc',
             },
         });
-        res.json({ data: notifications });
+        res.json({
+            status: 'success',
+            data: notifications
+        });
     }
     catch (error) {
+        console.error('Error fetching notifications:', error);
         throw new AppError('Error fetching notifications', 500);
     }
 };
@@ -39,11 +42,15 @@ export const markNotificationAsRead = async (req, res) => {
                 read: true,
             },
         });
-        res.json({ data: updatedNotification });
+        res.json({
+            status: 'success',
+            data: updatedNotification
+        });
     }
     catch (error) {
         if (error instanceof AppError)
             throw error;
+        console.error('Error marking notification as read:', error);
         throw new AppError('Error marking notification as read', 500);
     }
 };
@@ -65,12 +72,39 @@ export const deleteNotification = async (req, res) => {
                 id,
             },
         });
-        res.json({ message: 'Notification deleted successfully' });
+        res.json({
+            status: 'success',
+            message: 'Notification deleted successfully'
+        });
     }
     catch (error) {
         if (error instanceof AppError)
             throw error;
+        console.error('Error deleting notification:', error);
         throw new AppError('Error deleting notification', 500);
+    }
+};
+export const markAllNotificationsAsRead = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        // Update all unread notifications for the user
+        await prisma.notification.updateMany({
+            where: {
+                userId,
+                read: false,
+            },
+            data: {
+                read: true,
+            },
+        });
+        res.json({
+            status: 'success',
+            message: 'All notifications marked as read'
+        });
+    }
+    catch (error) {
+        console.error('Error marking notifications as read:', error);
+        throw new AppError('Error marking notifications as read', 500);
     }
 };
 //# sourceMappingURL=notification.controller.js.map

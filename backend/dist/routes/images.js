@@ -1,5 +1,5 @@
 import express from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
 import multer from 'multer';
 import { uploadImage, getImages, getImage, deleteImage, updateImageMetadata, shareImage, getSharedImage, addAnnotation, getAnnotations, deleteAnnotation, } from '../controllers/image.controller.js';
 const router = express.Router();

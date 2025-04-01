@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
+import { auth } from '@clerk/nextjs/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
-import { authOptions, UserRole } from '@/lib/auth/auth-options';
 import { getErrorResponse } from '@/lib/api/error-handler';
 import { ProviderSpecialty as PrismaProviderSpecialty, NotificationType as PrismaNotificationType } from '@prisma/client';
 
@@ -30,17 +29,22 @@ export async function PATCH(
 ) {
   try {
     // Get the authenticated user
-    const session = await getServerSession(authOptions);
+    const { userId } = await auth();
     
-    if (!session || !session.user) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
+
+    // Get the user from the database to check role
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
     
-    // Check if the user is an admin
-    if (session.user.role !== UserRole.ADMIN) {
+    if (!user || user.role !== 'ADMIN') {
       return NextResponse.json(
         { error: 'Only administrators can review verification requests' },
         { status: 403 }
@@ -86,7 +90,7 @@ export async function PATCH(
       data: {
         verificationStatus: validatedData.status as VerificationStatus,
         verifiedAt: new Date(),
-        verifiedBy: session.user.id,
+        verifiedBy: user.id,
         rejectionReason: validatedData.status === 'REJECTED' ? validatedData.rejectionReason : null,
         rejectedAt: validatedData.status === 'REJECTED' ? new Date() : null,
         notes: validatedData.notes,
@@ -137,7 +141,7 @@ export async function PATCH(
     await prisma.auditLog.create({
       data: {
         action: `VERIFICATION_${validatedData.status}`,
-        userId: session.user.id,
+        userId: user.id,
         details: {
           resourceType: 'ProviderVerification',
           resourceId: verification.id,

@@ -1,5 +1,4 @@
 import React from 'react';
-import { AuthProvider } from './AuthContext';
 import { WebSocketProvider } from './WebSocketContext';
 
 interface AppProvidersProps {
@@ -8,13 +7,15 @@ interface AppProvidersProps {
 
 export function AppProviders({ children }: AppProvidersProps) {
   return (
-    <AuthProvider>
-      <WebSocketProvider>
-        {children}
-      </WebSocketProvider>
-    </AuthProvider>
+    <WebSocketProvider>
+      {children}
+    </WebSocketProvider>
   );
 }
 
-export { useAuth } from './AuthContext';
-export { useWebSocket } from './WebSocketContext'; 
+export { WebSocketProvider } from './WebSocketContext';
+export { useWebSocket } from './WebSocketContext';
+export { ToastProvider } from './ToastContext';
+export { useToast } from './ToastContext';
+export { NotificationProvider } from './NotificationContext';
+export { useNotifications } from './NotificationContext'; 

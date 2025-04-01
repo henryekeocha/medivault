@@ -135,7 +135,8 @@ model User {
   name             String
   email            String    @unique
   username         String?   @unique
-  password         String    // Hashed password
+  authId           String?   @unique // External auth provider ID (Clerk)
+  password         String?   // Optional since we're using Clerk
   role             Role      @default(PATIENT)
   specialty        ProviderSpecialty? // Only applicable for providers
   emailVerified    DateTime?

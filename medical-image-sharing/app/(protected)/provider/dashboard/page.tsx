@@ -13,8 +13,8 @@ import UsageChart from '@/components/dashboard/UsageChart';
 import ActivityTimeline from '@/components/dashboard/ActivityTimeline';
 import TopUsersTable from '@/components/dashboard/TopUsersTable';
 import UpcomingAppointments from '@/components/dashboard/UpcomingAppointments';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { providerClient } from '@/lib/api/providerClient';
+import { useUser } from '@clerk/nextjs';
 import { formatBytes } from '@/utils/formatBytes'; 
 import '@/utils/dateUtils'; // Import to enable Date.prototype.toRelativeTime
 
@@ -41,8 +41,8 @@ interface ActivityTrend {
   value: number;
 }
 
-export default function ProviderDashboard() {
-  const { user } = useAuth();
+function ProviderDashboard() {
+  const { user, isLoaded } = useUser();
   const [loading, setLoading] = useState(true);
   const [providerStats, setProviderStats] = useState({
     patients: {
@@ -71,15 +71,24 @@ export default function ProviderDashboard() {
   const [activityTrend, setActivityTrend] = useState<ActivityTrend[]>([]);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      if (!user?.id) return;
-      
+    if (!isLoaded) return;
+
+    if (!user) {
+      return;
+    }
+
+    // Check if user has provider role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PROVIDER') {
+      return;
+    }
+    
+    async function fetchStats() {
       try {
         setLoading(true);
-        const apiClient = ApiClient.getInstance();
         
-        // Use the correct statistics endpoint for providers
-        const response = await apiClient.getProviderStatistics(user.id);
+        // Use providerClient to fetch statistics
+        const response = await providerClient.getProviderStatistics();
         
         if (response.status === 'success' && response.data) {
           const metrics = response.data;
@@ -162,17 +171,23 @@ export default function ProviderDashboard() {
       } finally {
         setLoading(false);
       }
-    };
-
-    if (user?.id) {
-      fetchStats();
-      
-      // Refresh stats every 5 minutes instead of every minute to reduce API load
-      const interval = setInterval(fetchStats, 5 * 60 * 1000);
-      
-      return () => clearInterval(interval);
     }
-  }, [user?.id]);
+
+    fetchStats();
+    
+    // Refresh stats every 5 minutes instead of every minute to reduce API load
+    const interval = setInterval(fetchStats, 5 * 60 * 1000);
+    
+    return () => clearInterval(interval);
+  }, [isLoaded, user]);
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
@@ -182,7 +197,7 @@ export default function ProviderDashboard() {
         </Typography>
         {user && (
           <Typography variant="subtitle1">
-            Welcome back, Dr. {user.name?.split(' ').slice(-1)[0] || 'Provider'}
+            Welcome back, Dr. {user.firstName || 'Provider'}
           </Typography>
         )}
       </Box>
@@ -252,7 +267,7 @@ export default function ProviderDashboard() {
         {/* Upcoming Appointments section */}
         <Grid item xs={12} md={6}>
           <UpcomingAppointments 
-            providerId={user?.id || ''}
+            providerId={user.id}
             loading={loading}
           />
         </Grid>
@@ -268,4 +283,6 @@ export default function ProviderDashboard() {
       </Grid>
     </Container>
   );
-} 
+}
+
+export default ProviderDashboard; 

@@ -16,16 +16,17 @@ import {
   CircularProgress,
   Link,
 } from '@mui/material';
-import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
-import { RegisterRequest } from '@/lib/api/types';
 import { Role, ProviderSpecialty } from '@prisma/client';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
 import { routes } from '@/config/routes';
 import type { Route } from 'next';
+import { useSignUp } from '@clerk/nextjs';
+import { useToast } from '@/contexts/ToastContext';
+import axios from 'axios';
 
-interface RegisterFormInputs extends Omit<RegisterRequest, 'role'> {
+interface RegisterFormInputs {
   email: string;
   password: string;
   confirmPassword: string;
@@ -35,7 +36,7 @@ interface RegisterFormInputs extends Omit<RegisterRequest, 'role'> {
 }
 
 export const RegisterForm: React.FC = () => {
-  const { register: registerUser, error: authError, isAuthenticated } = useAuth();
+  const { isLoaded, signUp, setActive } = useSignUp();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role>(Role.PATIENT);
@@ -43,6 +44,7 @@ export const RegisterForm: React.FC = () => {
   const { error, handleError, clearError, withErrorHandling } = useErrorHandler({
     context: 'Registration'
   });
+  const toast = useToast();
 
   const {
     register,
@@ -52,237 +54,277 @@ export const RegisterForm: React.FC = () => {
   } = useForm<RegisterFormInputs>();
 
   const password = watch('password');
-  
-  // Show auth context errors if they exist
-  useEffect(() => {
-    if (authError) {
-      handleError(new Error(authError));
-    }
-  }, [authError, handleError]);
 
-  // Redirect if already authenticated
-  useEffect(() => {
-    if (isAuthenticated) {
-      router.push('/dashboard');
+  // Function to sync user with database
+  const syncUserWithDatabase = async (userId: string, role: Role, specialty?: ProviderSpecialty) => {
+    try {
+      console.log('Syncing user with database:', userId);
+      const token = await window.Clerk?.session?.getToken();
+      
+      if (!token) {
+        console.error('Failed to get auth token for sync');
+        return false;
+      }
+      
+      // Store role in localStorage to ensure it's available during sync
+      localStorage.setItem('pendingUserRole', role);
+      if (specialty) {
+        localStorage.setItem('pendingUserSpecialty', specialty);
+      }
+      
+      // Call our sync endpoint with retry logic
+      let retries = 0;
+      const maxRetries = 3;
+      
+      while (retries < maxRetries) {
+        try {
+          console.log(`Sync attempt ${retries + 1}/${maxRetries}`);
+          
+          const response = await axios.post(
+            `/api/auth/sync/${userId}`,
+            {
+              role, 
+              specialty
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${token}`
+              }
+            }
+          );
+          
+          console.log('User sync successful:', response.data);
+          
+          // Update clerk metadata to indicate sync success
+          try {
+            await window.Clerk.user?.update({
+              publicMetadata: { 
+                dbSynced: true,
+                dbUserId: response.data.user.id
+              }
+            });
+          } catch (metadataError) {
+            console.error('Error updating Clerk metadata:', metadataError);
+            // Non-fatal error, continue
+          }
+          
+          return true;
+        } catch (error) {
+          retries++;
+          console.error(`Sync attempt ${retries} failed:`, error);
+          
+          if (retries >= maxRetries) {
+            console.error(`All ${maxRetries} sync attempts failed`);
+            return false;
+          }
+          
+          // Wait with exponential backoff before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retries - 1)));
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error syncing user with database:', error);
+      return false;
     }
-  }, [isAuthenticated, router]);
+  };
 
   const onSubmit = async (data: RegisterFormInputs) => {
-    await withErrorHandling(async () => {
+    withErrorHandling(async () => {
       setIsLoading(true);
       
       try {
-        // Validate passwords match
-        if (data.password !== data.confirmPassword) {
-          throw new Error('Passwords do not match');
+        if (!signUp) {
+          throw new Error('Sign up not initialized');
         }
-        
-        // Create a userData object matching the RegisterRequest interface
-        const userData: RegisterRequest = {
-          name: data.name,
-          email: data.email,
+
+        const result = await signUp.create({
+          emailAddress: data.email,
           password: data.password,
-          role: data.role,
-          specialty: data.specialty
-        };
-        
-        await registerUser(userData);
-        
-        // If no error was thrown, registration was successful
-        setRegistrationSuccess(true);
-        
-        // Redirect to login after successful registration
-        setTimeout(() => {
-          router.push(routes.root.login as Route);
-        }, 2000);
+          firstName: data.name.split(' ')[0],
+          lastName: data.name.split(' ').slice(1).join(' '),
+          unsafeMetadata: {
+            role: data.role,
+            specialty: data.specialty || null
+          }
+        });
+
+        if (result?.status === 'complete') {
+          await setActive({ session: result.createdSessionId });
+          
+          // Store role (and specialty if applicable) for later use when email verification is completed
+          localStorage.setItem('pendingUserRole', data.role);
+          if (data.role === 'PROVIDER' && data.specialty) {
+            localStorage.setItem('pendingUserSpecialty', data.specialty);
+          }
+          
+          // Try to sync the user with our database
+          if (result.createdUserId) {
+            const syncResult = await syncUserWithDatabase(
+              result.createdUserId, 
+              data.role, 
+              data.specialty
+            );
+            
+            if (syncResult) {
+              toast.showSuccess('Registration successful and user data synced!');
+            } else {
+              toast.showInfo('Registration successful, but user data sync failed. Please try logging in again.');
+            }
+          }
+          
+          setRegistrationSuccess(true);
+          router.push('/dashboard');
+        } else if (result?.status === 'missing_requirements') {
+          // Store role (and specialty if applicable) for later use when requirements are fulfilled
+          localStorage.setItem('pendingUserRole', data.role);
+          if (data.role === 'PROVIDER' && data.specialty) {
+            localStorage.setItem('pendingUserSpecialty', data.specialty);
+          }
+          
+          // User needs to verify email, show success message and verification instructions
+          setRegistrationSuccess(true);
+          setIsLoading(false);
+        } else {
+          throw new Error('Registration failed');
+        }
+      } catch (error) {
+        handleError(error);
       } finally {
         setIsLoading(false);
       }
     });
   };
 
+  if (!isLoaded) {
+    return <LoadingState />;
+  }
+
   return (
-    <Box
-      component="form"
-      onSubmit={handleSubmit(onSubmit)}
-      sx={{
-        maxWidth: 500,
-        mx: 'auto',
-        mt: 4,
-        p: 3,
-        borderRadius: 2,
-        boxShadow: 3,
-        bgcolor: 'background.paper',
-      }}
-    >
-      <Typography variant="h5" component="h1" gutterBottom textAlign="center">
-        Create an Account
-      </Typography>
-
-      {error && (
-        <Alert 
-          severity="error" 
-          sx={{ mb: 2 }}
-          action={
-            <Button 
-              color="inherit" 
-              size="small" 
-              onClick={clearError}
-            >
-              Dismiss
-            </Button>
-          }
-        >
-          {error}
-        </Alert>
-      )}
-      
-      {registrationSuccess && (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          Registration successful! Redirecting...
-        </Alert>
-      )}
-
+    <Box component="form" onSubmit={handleSubmit(onSubmit)} sx={{ mt: 1 }}>
       <TextField
+        margin="normal"
+        required
+        fullWidth
+        id="name"
+        label="Full Name"
+        autoComplete="name"
+        autoFocus
         {...register('name', {
-          required: 'Full name is required',
+          required: 'Name is required',
           minLength: {
             value: 2,
-            message: 'Name must be at least 2 characters',
-          },
+            message: 'Name must be at least 2 characters'
+          }
         })}
-        label="Full Name"
-        fullWidth
-        margin="normal"
         error={!!errors.name}
         helperText={errors.name?.message}
-        disabled={isLoading || registrationSuccess}
       />
-
       <TextField
+        margin="normal"
+        required
+        fullWidth
+        id="email"
+        label="Email Address"
+        autoComplete="email"
         {...register('email', {
           required: 'Email is required',
           pattern: {
             value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-            message: 'Invalid email address',
-          },
+            message: 'Invalid email address'
+          }
         })}
-        label="Email"
-        fullWidth
-        margin="normal"
         error={!!errors.email}
         helperText={errors.email?.message}
-        disabled={isLoading || registrationSuccess}
-        type="email"
-        autoComplete="email"
       />
-
       <TextField
+        margin="normal"
+        required
+        fullWidth
+        label="Password"
+        type="password"
+        id="password"
+        autoComplete="new-password"
         {...register('password', {
           required: 'Password is required',
           minLength: {
             value: 8,
-            message: 'Password must be at least 8 characters',
-          },
-          pattern: {
-            value: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
-            message:
-              'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character',
-          },
+            message: 'Password must be at least 8 characters'
+          }
         })}
-        label="Password"
-        type="password"
-        fullWidth
-        margin="normal"
         error={!!errors.password}
         helperText={errors.password?.message}
-        disabled={isLoading || registrationSuccess}
-        autoComplete="new-password"
       />
-
       <TextField
-        {...register('confirmPassword', {
-          required: 'Please confirm your password',
-          validate: value => value === password || 'Passwords do not match',
-        })}
+        margin="normal"
+        required
+        fullWidth
         label="Confirm Password"
         type="password"
-        fullWidth
-        margin="normal"
+        id="confirmPassword"
+        autoComplete="new-password"
+        {...register('confirmPassword', {
+          required: 'Please confirm your password',
+          validate: value => value === password || 'Passwords do not match'
+        })}
         error={!!errors.confirmPassword}
         helperText={errors.confirmPassword?.message}
-        disabled={isLoading || registrationSuccess}
-        autoComplete="new-password"
       />
-
-      <FormControl fullWidth margin="normal" error={!!errors.role}>
-        <InputLabel id="role-select-label">Role</InputLabel>
+      <FormControl fullWidth margin="normal">
+        <InputLabel id="role-label">Role</InputLabel>
         <Select
-          labelId="role-select-label"
+          labelId="role-label"
+          id="role"
           label="Role"
-          defaultValue={Role.PATIENT}
           {...register('role', { required: 'Role is required' })}
-          onChange={e => setSelectedRole(e.target.value as Role)}
-          disabled={isLoading || registrationSuccess}
+          value={selectedRole}
+          onChange={(e) => setSelectedRole(e.target.value as Role)}
         >
           <MenuItem value={Role.PATIENT}>Patient</MenuItem>
           <MenuItem value={Role.PROVIDER}>Provider</MenuItem>
+          <MenuItem value={Role.ADMIN}>Admin</MenuItem>
         </Select>
-        {errors.role && <FormHelperText>{errors.role.message}</FormHelperText>}
+        {errors.role && (
+          <FormHelperText error>{errors.role.message}</FormHelperText>
+        )}
       </FormControl>
-
       {selectedRole === Role.PROVIDER && (
-        <FormControl fullWidth margin="normal" error={!!errors.specialty}>
-          <InputLabel id="specialty-select-label">Specialty</InputLabel>
+        <FormControl fullWidth margin="normal">
+          <InputLabel id="specialty-label">Specialty</InputLabel>
           <Select
-            labelId="specialty-select-label"
+            labelId="specialty-label"
+            id="specialty"
             label="Specialty"
-            defaultValue=""
-            {...register('specialty', {
-              required: selectedRole === Role.PROVIDER ? 'Specialty is required for providers' : false,
-            })}
-            disabled={isLoading || registrationSuccess}
+            {...register('specialty')}
           >
-            {Object.values(ProviderSpecialty).map(specialty => (
+            {Object.values(ProviderSpecialty).map((specialty) => (
               <MenuItem key={specialty} value={specialty}>
-                {specialty.replace(/_/g, ' ')}
+                {specialty}
               </MenuItem>
             ))}
           </Select>
-          {errors.specialty && <FormHelperText>{errors.specialty.message}</FormHelperText>}
         </FormControl>
       )}
-
+      {error && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {error}
+        </Alert>
+      )}
       <Button
         type="submit"
-        variant="contained"
         fullWidth
-        size="large"
-        sx={{ mt: 3 }}
-        disabled={isLoading || registrationSuccess}
+        variant="contained"
+        sx={{ mt: 3, mb: 2 }}
+        disabled={isLoading}
       >
-        {isLoading ? (
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <CircularProgress size={24} sx={{ mr: 1 }} color="inherit" />
-            Registering...
-          </Box>
-        ) : (
-          'Register'
-        )}
+        {isLoading ? <CircularProgress size={24} /> : 'Register'}
       </Button>
-
-      <Box sx={{ mt: 2, textAlign: 'center' }}>
+      <Box sx={{ textAlign: 'center' }}>
         <Typography variant="body2" color="text.secondary">
           Already have an account?{' '}
-          <Link
-            component="button"
-            onClick={(e) => {
-              e.preventDefault();
-              router.push(routes.root.login as Route);
-            }}
-            sx={{ textDecoration: 'none' }}
-          >
-            Login here
+          <Link href={routes.root.login} variant="body2">
+            Sign in
           </Link>
         </Typography>
       </Box>

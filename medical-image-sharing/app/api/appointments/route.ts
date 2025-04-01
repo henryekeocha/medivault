@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/auth-options';
+import { auth } from '@clerk/nextjs/server';
 import prisma from '@/lib/prisma';
 import { validateRequest } from '@/lib/validation';
 import { hipaaLogger } from '@/lib/hipaa';
@@ -25,12 +24,18 @@ const getAppointmentsQuerySchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (session?.user?.role !== Role.PROVIDER) {
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
+
+    if (!user || user.role !== Role.PROVIDER) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 403 }
@@ -73,7 +78,7 @@ export async function POST(req: NextRequest) {
           end.setMinutes(end.getMinutes() + 30); // Default 30-minute slots
           return end;
         })(),
-        patientId: session.user.id,
+        patientId: user.id,
         doctorId,
         notes,
         imageId,
@@ -97,7 +102,7 @@ export async function POST(req: NextRequest) {
 
     await hipaaLogger.log({
       action: 'CREATE_APPOINTMENT',
-      userId: session.user.id,
+      userId: user.id,
       resourceId: appointment.id,
       details: `Appointment created with provider ${doctorId}`,
     });
@@ -120,12 +125,18 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (session?.user?.role !== Role.PROVIDER) {
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
+
+    if (!user || user.role !== Role.PROVIDER) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 403 }
@@ -142,9 +153,9 @@ export async function GET(req: NextRequest) {
     });
 
     const where = {
-      ...(session.user.role === Role.PROVIDER
-        ? { doctorId: session.user.id }
-        : { patientId: session.user.id }),
+      ...(user.role === Role.PROVIDER
+        ? { doctorId: user.id }
+        : { patientId: user.id }),
       ...(query.status && { status: query.status }),
       ...(query.startDate && {
         startTime: {
@@ -191,21 +202,21 @@ export async function GET(req: NextRequest) {
 
     await hipaaLogger.log({
       action: 'VIEW_APPOINTMENTS',
-      userId: session.user.id,
+      userId: user.id,
       details: `Retrieved appointments list`,
     });
 
     return NextResponse.json({
       appointments,
       pagination: {
-        page: query.page,
-        limit: query.limit,
-        total,
-        pages: Math.ceil(total / query.limit),
+        currentPage: query.page,
+        totalPages: Math.ceil(total / query.limit),
+        totalItems: total,
+        itemsPerPage: query.limit,
       },
     });
   } catch (error) {
-    console.error('Error fetching appointments:', error);
+    console.error('Error retrieving appointments:', error);
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Invalid query parameters', details: error.errors },

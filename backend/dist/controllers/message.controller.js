@@ -1,6 +1,6 @@
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { decryptData } from '../middleware/encryption.js';
 // Send message
 export const sendMessage = catchAsync(async (req, res) => {
@@ -127,45 +127,121 @@ export const deleteMessage = catchAsync(async (req, res) => {
 // Get conversations
 export const getConversations = catchAsync(async (req, res) => {
     const userId = req.user.id;
-    // Using Prisma's raw query capabilities for complex query
-    const conversations = await prisma.$queryRaw `
-    SELECT DISTINCT 
-      CASE 
-        WHEN m."senderId" = ${userId} THEN m."recipientId" 
-        ELSE m."senderId" 
-      END as "participantId",
-      u.username as "participantName",
-      u.email as "participantEmail",
-      (
-        SELECT m2.content 
-        FROM "Message" m2 
-        WHERE (m2."senderId" = ${userId} AND m2."recipientId" = "participantId") 
-           OR (m2."senderId" = "participantId" AND m2."recipientId" = ${userId}) 
-        ORDER BY m2."createdAt" DESC 
-        LIMIT 1
-      ) as "lastMessage",
-      (
-        SELECT m2."createdAt" 
-        FROM "Message" m2 
-        WHERE (m2."senderId" = ${userId} AND m2."recipientId" = "participantId") 
-           OR (m2."senderId" = "participantId" AND m2."recipientId" = ${userId}) 
-        ORDER BY m2."createdAt" DESC 
-        LIMIT 1
-      ) as "lastMessageAt"
-    FROM "Message" m
-    INNER JOIN "User" u ON u.id = 
-      CASE 
-        WHEN m."senderId" = ${userId} THEN m."recipientId" 
-        ELSE m."senderId" 
-      END
-    WHERE m."senderId" = ${userId} OR m."recipientId" = ${userId}
-    ORDER BY "lastMessageAt" DESC
-  `;
+    // Get all messages for the current user
+    const messages = await prisma.message.findMany({
+        where: {
+            OR: [
+                { senderId: userId },
+                { recipientId: userId }
+            ]
+        },
+        include: {
+            sender: {
+                select: {
+                    id: true,
+                    username: true,
+                    email: true
+                }
+            },
+            recipient: {
+                select: {
+                    id: true,
+                    username: true,
+                    email: true
+                }
+            }
+        },
+        orderBy: {
+            createdAt: 'desc'
+        }
+    });
+    // Group messages by conversation
+    const conversations = messages.reduce((acc, message) => {
+        const participantId = message.senderId === userId ? message.recipientId : message.senderId;
+        const participant = message.senderId === userId ? message.recipient : message.sender;
+        // Check if conversation already exists
+        const existingConversation = acc.find(c => c.participantId === participantId);
+        if (!existingConversation) {
+            acc.push({
+                participantId,
+                participantName: participant.username,
+                participantEmail: participant.email,
+                lastMessage: message.content,
+                lastMessageAt: message.createdAt
+            });
+        }
+        return acc;
+    }, []);
     res.status(200).json({
         status: 'success',
         data: {
             conversations,
         },
+    });
+});
+// Template categories for message templates
+const templateCategories = [
+    { id: 'general', name: 'General' },
+    { id: 'appointment', name: 'Appointment' },
+    { id: 'results', name: 'Test Results' },
+    { id: 'followup', name: 'Follow-up Care' },
+    { id: 'prescription', name: 'Prescription' },
+    { id: 'billing', name: 'Billing & Insurance' },
+];
+// Initial message templates
+const messageTemplates = [
+    {
+        id: 'template-1',
+        title: 'Appointment Reminder',
+        content: 'This is a reminder that you have an appointment scheduled for [DATE] at [TIME]. Please let us know if you need to reschedule.',
+        category: 'appointment',
+        isDefault: true,
+    },
+    {
+        id: 'template-2',
+        title: 'Results Ready',
+        content: 'Your test results are now available. Please schedule a follow-up appointment to discuss the findings.',
+        category: 'results',
+        isDefault: true,
+    },
+    {
+        id: 'template-3',
+        title: 'Prescription Refill',
+        content: 'Your prescription refill has been processed and is ready for pickup at your pharmacy.',
+        category: 'prescription',
+        isDefault: true,
+    },
+    {
+        id: 'template-4',
+        title: 'Follow-up Needed',
+        content: 'Based on your recent imaging study, we recommend a follow-up appointment to discuss the results and next steps.',
+        category: 'followup',
+        isDefault: true,
+    },
+    {
+        id: 'template-5',
+        title: 'Additional Information Needed',
+        content: 'We need some additional information about your symptoms before your appointment. Can you please provide more details?',
+        category: 'general',
+        isDefault: true,
+    },
+];
+// Get message templates
+export const getMessageTemplates = catchAsync(async (req, res) => {
+    // In a real implementation, these would be fetched from the database
+    // For now, we'll return the static templates
+    res.status(200).json({
+        status: 'success',
+        data: messageTemplates
+    });
+});
+// Get message template categories
+export const getMessageTemplateCategories = catchAsync(async (req, res) => {
+    // In a real implementation, these would be fetched from the database
+    // For now, we'll return the static categories
+    res.status(200).json({
+        status: 'success',
+        data: templateCategories
     });
 });
 //# sourceMappingURL=message.controller.js.map

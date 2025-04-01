@@ -1,6 +1,6 @@
 import express from 'express';
-import { protect } from '../middleware/auth.js';
-import { getNotifications, markNotificationAsRead, deleteNotification } from '../controllers/notification.controller.js';
+import { protect } from '../middleware/clerk.js';
+import { getNotifications, markNotificationAsRead, deleteNotification, markAllNotificationsAsRead } from '../controllers/notification.controller.js';
 const router = express.Router();
 // Protect all notification routes
 router.use(protect);
@@ -8,6 +8,8 @@ router.use(protect);
 router.get('/', getNotifications);
 // Mark a notification as read
 router.patch('/:id/read', markNotificationAsRead);
+// Mark all notifications as read
+router.patch('/read-all', markAllNotificationsAsRead);
 // Delete a notification
 router.delete('/:id', deleteNotification);
 export default router;

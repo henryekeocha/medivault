@@ -20,6 +20,21 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        process: require.resolve('process/browser'),
+      };
+      config.plugins = [
+        ...config.plugins,
+        new (require('webpack')).ProvidePlugin({
+          process: 'process/browser',
+        }),
+      ];
+    }
+    return config;
+  },
   // Configure image domains for next/image
   images: {
     domains: ['localhost', 'medivault.online', 'api.medivault.online', 'medical-images-dev.s3.amazonaws.com'],
@@ -61,6 +76,22 @@ const nextConfig = {
       {
         source: '/direct-api/:path*',
         destination: 'http://127.0.0.1:3001/api/:path*',
+      },
+      
+      // 2FA Auth routes
+      {
+        source: '/api/auth/send-code',
+        destination: 'http://127.0.0.1:3001/api/auth/send-code',
+      },
+      {
+        source: '/api/auth/verify-code',
+        destination: 'http://127.0.0.1:3001/api/auth/verify-code',
+      },
+      
+      // Auth sync routes
+      {
+        source: '/api/auth/sync/:path*',
+        destination: 'http://127.0.0.1:3001/api/auth/sync/:path*',
       },
       
       // Backend API routes - forcing IPv4

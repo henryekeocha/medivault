@@ -1,6 +1,6 @@
 import express from 'express';
 import type { RequestHandler } from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
 import { 
   getNotifications, 
   markNotificationAsRead, 

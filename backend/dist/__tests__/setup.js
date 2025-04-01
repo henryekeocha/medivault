@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 beforeAll(async () => {
     // Connect to test database
     await prisma.$connect();

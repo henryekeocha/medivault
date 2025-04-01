@@ -1,5 +1,5 @@
 import { PrismaClient, Role } from '@prisma/client';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
@@ -7,62 +7,55 @@ async function main() {
   // Create admin user
   const adminPassword = await bcrypt.hash('admin123', 10);
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@medical-imaging.com' },
+    where: {
+      email: "admin@medical-imaging.com"
+    },
     update: {},
     create: {
-      email: 'admin@medical-imaging.com',
-      username: 'admin',
+      email: "admin@medical-imaging.com",
+      username: "admin",
       password: adminPassword,
       role: Role.ADMIN,
-      name: 'System Administrator',
+      name: "System Administrator",
       isActive: true,
-    },
+      authId: "admin_user_123" // Temporary authId for seeding
+    }
   });
 
   // Create test provider
   const providerPassword = await bcrypt.hash('provider123', 10);
   const provider = await prisma.user.upsert({
-    where: { email: 'provider@medical-imaging.com' },
+    where: {
+      email: "provider@medical-imaging.com"
+    },
     update: {},
     create: {
-      email: 'provider@medical-imaging.com',
-      username: 'provider',
+      email: "provider@medical-imaging.com",
+      username: "provider",
       password: providerPassword,
       role: Role.PROVIDER,
-      name: 'Test Provider',
+      name: "Test Provider",
       isActive: true,
-    },
+      authId: "provider_user_123" // Temporary authId for seeding
+    }
   });
 
   // Create test patient
   const patientPassword = await bcrypt.hash('patient123', 10);
   const patient = await prisma.user.upsert({
-    where: { email: 'patient@medical-imaging.com' },
+    where: {
+      email: "patient@medical-imaging.com"
+    },
     update: {},
     create: {
-      email: 'patient@medical-imaging.com',
-      username: 'patient',
+      email: "patient@medical-imaging.com",
+      username: "patient",
       password: patientPassword,
       role: Role.PATIENT,
-      name: 'Test Patient',
+      name: "Test Patient",
       isActive: true,
-    },
-  });
-
-  // Create system settings
-  await prisma.systemSettings.upsert({
-    where: { id: 'default' },
-    update: {},
-    create: {
-      id: 'default',
-      maintenanceMode: false,
-      maintenanceMessage: null,
-      allowNewRegistrations: true,
-      maxUploadSize: 10485760, // 10MB
-      allowedFileTypes: ['image/jpeg', 'image/png', 'image/dicom'],
-      defaultStorageQuota: 5368709120, // 5GB
-      smtpConfigured: false,
-    },
+      authId: "patient_user_123" // Temporary authId for seeding
+    }
   });
 
   // Create user settings for each user
@@ -111,6 +104,7 @@ async function main() {
     }),
   ]);
 
+  console.log({ admin, provider, patient });
   console.log('Seed data created successfully');
   console.log('Admin user:', admin.email);
   console.log('Provider user:', provider.email);

@@ -38,26 +38,11 @@ import {
   Add as AddIcon,
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import { ApiClient } from '@/lib/api/client';
+import { patientClient } from '@/lib/api/patientClient';
+import { useErrorHandler } from '@/hooks/useErrorHandler';
+import { User } from '@/lib/api/types';
 
-// Extend the ApiClient interface to include the missing methods
-declare module '@/lib/api/client' {
-  interface ApiClient {
-    get(url: string): Promise<{
-      ok: boolean;
-      json: () => Promise<any>;
-    }>;
-    
-    post(url: string, data: any): Promise<{
-      ok: boolean;
-      json: () => Promise<any>;
-    }>;
-  }
-}
-
-interface Provider {
-  id: string;
-  name: string;
+interface ProviderMetadata {
   specialty: string;
   hospital: string;
   rating: number;
@@ -67,12 +52,18 @@ interface Provider {
   nextAppointment?: string;
 }
 
+interface Provider extends User {
+  providerMetadata: ProviderMetadata;
+}
+
 export default function PatientProvidersPage() {
   const router = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { error, loading, withErrorHandling, clearError } = useErrorHandler({
+    context: 'Patient Providers',
+    showToastByDefault: true
+  });
   const [notification, setNotification] = useState<{
     open: boolean;
     message: string;
@@ -83,7 +74,6 @@ export default function PatientProvidersPage() {
     type: 'info',
   });
   
-  // Add new provider dialog
   const [addProviderDialog, setAddProviderDialog] = useState(false);
   const [providerCode, setProviderCode] = useState('');
   const [addingProvider, setAddingProvider] = useState(false);
@@ -94,25 +84,29 @@ export default function PatientProvidersPage() {
   }, []);
 
   const fetchProviders = async () => {
-    setLoading(true);
-    setError(null);
-    
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.get('/api/patient/providers');
-      
-      if (response.ok) {
-        const data = await response.json();
-        setProviders(data.providers);
+      const response = await patientClient.getProviders();
+      if (response?.status === 'success' && Array.isArray(response.data)) {
+        // Transform User[] into Provider[] with default metadata
+        const transformedProviders: Provider[] = response.data.map((user: User) => ({
+          ...user,
+          providerMetadata: {
+            specialty: 'Not specified',
+            hospital: 'Not specified',
+            rating: 0,
+            reviewCount: 0,
+            status: 'active'
+          }
+        }));
+        setProviders(transformedProviders);
       } else {
-        const errorData = await response.json();
-        setError(errorData.message || 'Failed to fetch providers');
+        // Handle empty or invalid response
+        console.warn('Invalid provider data received:', response);
+        setProviders([]);
       }
-    } catch (err) {
-      setError('An error occurred while fetching providers. Please try again later.');
-      console.error('Error fetching providers:', err);
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching providers:', error);
+      setProviders([]); // Ensure we always have an empty array in case of error
     }
   };
 
@@ -127,17 +121,20 @@ export default function PatientProvidersPage() {
     }
     
     setAddingProvider(true);
-    
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.post('/api/patient/providers/add', {
-        providerCode: providerCode.trim(),
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        // Add the new provider to the list
-        setProviders([...providers, data.provider]);
+      const response = await patientClient.linkProvider(providerCode.trim());
+      if (response.status === 'success') {
+        const newProvider: Provider = {
+          ...response.data,
+          providerMetadata: {
+            specialty: 'Not specified',
+            hospital: 'Not specified',
+            rating: 0,
+            reviewCount: 0,
+            status: 'active'
+          }
+        };
+        setProviders([...providers, newProvider]);
         setAddProviderDialog(false);
         setProviderCode('');
         setNotification({
@@ -146,20 +143,14 @@ export default function PatientProvidersPage() {
           type: 'success',
         });
       } else {
-        const errorData = await response.json();
-        setNotification({
-          open: true,
-          message: errorData.message || 'Failed to add provider',
-          type: 'error',
-        });
+        throw new Error(response.error?.message || 'Failed to add provider');
       }
-    } catch (err) {
+    } catch (error) {
       setNotification({
         open: true,
-        message: 'An error occurred. Please try again later.',
+        message: error instanceof Error ? error.message : 'An error occurred. Please try again later.',
         type: 'error',
       });
-      console.error('Error adding provider:', err);
     } finally {
       setAddingProvider(false);
     }
@@ -177,214 +168,179 @@ export default function PatientProvidersPage() {
     router.push(`/patient/share?provider=${providerId}`);
   };
 
-  // Filter providers based on search term
-  const filteredProviders = providers.filter(provider => 
-    provider.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    provider.specialty.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    provider.hospital.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleCloseNotification = () => {
+    setNotification(prev => ({ ...prev, open: false }));
+  };
+
+  const handleCloseDialog = () => {
+    setAddProviderDialog(false);
+    setProviderCode('');
+  };
+
+  const handleOpenDialog = () => {
+    setAddProviderDialog(true);
+  };
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        My Healthcare Providers
-      </Typography>
-
-      {/* Search Bar */}
-      <Box sx={{ mb: 4 }}>
-        <TextField
-          fullWidth
-          label="Search Providers"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          InputProps={{
-            endAdornment: <SearchIcon color="action" />,
-          }}
-        />
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" component="h1">
+          My Providers
+        </Typography>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={handleOpenDialog}
+        >
+          Add Provider
+        </Button>
       </Box>
 
-      {/* Error message */}
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert 
+          severity="error" 
+          sx={{ mb: 3 }}
+          action={
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={() => clearError()}
+            >
+              Dismiss
+            </Button>
+          }
+        >
           {error}
         </Alert>
       )}
 
-      {/* Loading state */}
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-          <CircularProgress />
-        </Box>
-      ) : filteredProviders.length > 0 ? (
-        <Paper sx={{ mb: 4, p: 0 }}>
-          <List>
-            {filteredProviders.map((provider) => (
-              <ListItem
-                key={provider.id}
-                alignItems="flex-start"
-                sx={{
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
-                  '&:last-child': {
-                    borderBottom: 'none',
-                  },
-                }}
-              >
-                <ListItemAvatar>
-                  <Avatar
-                    sx={{
-                      width: 56,
-                      height: 56,
-                      bgcolor: 'primary.main',
-                      fontSize: '1.5rem',
-                    }}
-                  >
-                    {provider.name.charAt(0)}
-                  </Avatar>
-                </ListItemAvatar>
-                <ListItemText
-                  primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      {/* Search Bar */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs>
+            <TextField
+              fullWidth
+              placeholder="Search providers..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: <SearchIcon sx={{ color: 'text.secondary', mr: 1 }} />,
+              }}
+            />
+          </Grid>
+        </Grid>
+      </Paper>
+
+      {/* Providers Grid */}
+      <Grid container spacing={3}>
+        {providers
+          .filter(provider => 
+            provider.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            provider.providerMetadata.specialty.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            provider.providerMetadata.hospital.toLowerCase().includes(searchTerm.toLowerCase())
+          )
+          .map((provider) => (
+            <Grid item xs={12} sm={6} md={4} key={provider.id}>
+              <Card>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                    <Avatar sx={{ bgcolor: 'primary.main', mr: 2 }}>
+                      {provider.name.charAt(0)}
+                    </Avatar>
+                    <Box>
                       <Typography variant="h6">{provider.name}</Typography>
-                      <Chip
-                        size="small"
-                        label={provider.status}
-                        color={provider.status === 'active' ? 'success' : 'default'}
-                      />
-                    </Box>
-                  }
-                  secondary={
-                    <Box sx={{ mt: 1 }}>
                       <Typography variant="body2" color="text.secondary">
-                        {provider.specialty} at {provider.hospital}
+                        {provider.providerMetadata.specialty}
                       </Typography>
-                      <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                        <Rating
-                          value={provider.rating}
-                          precision={0.5}
-                          size="small"
-                          readOnly
-                        />
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          sx={{ ml: 1 }}
-                        >
-                          ({provider.reviewCount} reviews)
-                        </Typography>
-                      </Box>
-                      {provider.lastVisit && (
-                        <Typography variant="body2" color="text.secondary">
-                          Last visit: {provider.lastVisit}
-                        </Typography>
-                      )}
-                      {provider.nextAppointment && (
-                        <Typography
-                          variant="body2"
-                          sx={{ color: 'primary.main', mt: 0.5 }}
-                        >
-                          Next appointment: {provider.nextAppointment}
-                        </Typography>
-                      )}
                     </Box>
-                  }
-                />
-                <ListItemSecondaryAction
-                  sx={{
-                    display: 'flex',
-                    gap: 1,
-                    alignItems: 'center',
-                    height: '100%',
-                  }}
-                >
-                  <IconButton
-                    color="primary"
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    {provider.providerMetadata.hospital}
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                    <Rating value={provider.providerMetadata.rating} readOnly size="small" />
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                      ({provider.providerMetadata.reviewCount} reviews)
+                    </Typography>
+                  </Box>
+                  <Box sx={{ mt: 2 }}>
+                    <Chip
+                      label={provider.providerMetadata.status}
+                      color={
+                        provider.providerMetadata.status === 'active'
+                          ? 'success'
+                          : provider.providerMetadata.status === 'pending'
+                          ? 'warning'
+                          : 'error'
+                      }
+                      size="small"
+                    />
+                  </Box>
+                </CardContent>
+                <CardActions>
+                  <Button
+                    size="small"
+                    startIcon={<MessageIcon />}
                     onClick={() => handleMessage(provider.id)}
                   >
-                    <MessageIcon />
-                  </IconButton>
-                  <IconButton
-                    color="primary"
+                    Message
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<CalendarIcon />}
                     onClick={() => handleSchedule(provider.id)}
                   >
-                    <CalendarIcon />
-                  </IconButton>
-                  <IconButton
-                    color="primary"
+                    Schedule
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<ShareIcon />}
                     onClick={() => handleShare(provider.id)}
                   >
-                    <ShareIcon />
-                  </IconButton>
-                </ListItemSecondaryAction>
-              </ListItem>
-            ))}
-          </List>
-        </Paper>
-      ) : (
-        <Paper sx={{ p: 3, textAlign: 'center', mb: 4 }}>
-          <Typography variant="body1" color="text.secondary">
-            {searchTerm ? 'No providers match your search criteria' : 'You have no healthcare providers yet'}
-          </Typography>
-        </Paper>
-      )}
-
-      {/* Add New Provider Button */}
-      <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-        <Button
-          variant="outlined"
-          color="primary"
-          size="large"
-          startIcon={<AddIcon />}
-          onClick={() => setAddProviderDialog(true)}
-        >
-          Add New Provider
-        </Button>
-      </Box>
+                    Share
+                  </Button>
+                </CardActions>
+              </Card>
+            </Grid>
+          ))}
+      </Grid>
 
       {/* Add Provider Dialog */}
-      <Dialog open={addProviderDialog} onClose={() => !addingProvider && setAddProviderDialog(false)}>
-        <DialogTitle>Add a New Provider</DialogTitle>
+      <Dialog open={addProviderDialog} onClose={handleCloseDialog}>
+        <DialogTitle>Add Provider</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            Enter the provider code given to you by your healthcare provider to connect with them.
+          <DialogContentText sx={{ mb: 2 }}>
+            Enter the provider code to connect with your healthcare provider.
           </DialogContentText>
           <TextField
             autoFocus
-            margin="dense"
-            label="Provider Code"
             fullWidth
-            variant="outlined"
+            label="Provider Code"
             value={providerCode}
             onChange={(e) => setProviderCode(e.target.value)}
-            disabled={addingProvider}
           />
         </DialogContent>
         <DialogActions>
-          <Button 
-            onClick={() => setAddProviderDialog(false)} 
-            disabled={addingProvider}
-          >
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleAddProvider} 
-            variant="contained" 
-            disabled={addingProvider || !providerCode.trim()}
+          <Button onClick={handleCloseDialog}>Cancel</Button>
+          <Button
+            onClick={handleAddProvider}
+            variant="contained"
+            disabled={!providerCode.trim() || addingProvider}
           >
             {addingProvider ? <CircularProgress size={24} /> : 'Add Provider'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Notification */}
+      {/* Notification Snackbar */}
       <Snackbar
         open={notification.open}
         autoHideDuration={6000}
-        onClose={() => setNotification({ ...notification, open: false })}
+        onClose={handleCloseNotification}
       >
-        <Alert 
-          onClose={() => setNotification({ ...notification, open: false })} 
-          severity={notification.type} 
+        <Alert
+          onClose={handleCloseNotification}
+          severity={notification.type}
           sx={{ width: '100%' }}
         >
           {notification.message}

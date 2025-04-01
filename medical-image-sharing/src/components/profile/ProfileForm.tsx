@@ -8,389 +8,322 @@ import {
   Grid,
   TextField,
   Button,
-  Switch,
   FormControlLabel,
   Divider,
   Alert,
   Dialog,
   DialogContent,
   CircularProgress,
+  Tab,
+  Tabs,
 } from '@mui/material';
-import { useAuth } from '@/contexts/AuthContext';
+import { Switch } from '@mui/material';
+import { useRouter } from 'next/navigation';
+import { useUser, useAuth as useClerkAuth } from '@clerk/nextjs';
+import { useAuth } from '@/lib/clerk/use-auth';
 import { TwoFactorForm } from '@/components/auth/TwoFactorForm';
-import { ApiClient } from '@/lib/api/client'; 
+import { patientClient, providerClient, adminClient } from '@/lib/api';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
-import { RefreshOutlined as RefreshIcon } from '@mui/icons-material';
+import { RefreshOutlined as RefreshIcon, LockOutlined as LockIcon } from '@mui/icons-material';
+import { Role } from '@prisma/client';
+
+// Note: Session interface is already extended in src/types/next-auth.d.ts
 
 interface ProfileFormProps {
   additionalFields?: React.ReactNode;
+  userData?: {
+    name?: string;
+    phoneNumber?: string;
+  };
+  onUpdate?: (response: any) => void;
 }
 
-// Create a profile data interface to include phoneNumber
 interface ProfileData {
-  name: string;
+  firstName: string;
+  lastName: string;
   phoneNumber: string;
 }
 
-export function ProfileForm({ additionalFields }: ProfileFormProps) {
-  const auth = useAuth();
-  const [loading, setLoading] = useState(false);
+interface PasswordData {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
+interface MFAData {
+  enabled: boolean;
+  method: 'sms' | 'authenticator';
+}
+
+// Tab interface
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`profile-tabpanel-${index}`}
+      aria-labelledby={`profile-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ p: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
+function a11yProps(index: number) {
+  return {
+    id: `profile-tab-${index}`,
+    'aria-controls': `profile-tabpanel-${index}`,
+  };
+}
+
+export function ProfileFormComponent({ additionalFields, userData, onUpdate }: ProfileFormProps) {
+  const router = useRouter();
+  const { user } = useUser();
+  const { withErrorHandling, handleError } = useErrorHandler();
+  const [tabValue, setTabValue] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState('');
-  const [showTwoFactorSetup, setShowTwoFactorSetup] = useState(false);
-  const [profileData, setProfileData] = useState<ProfileData>({
-    name: auth.user?.name || '',
-    phoneNumber: (auth.user as any)?.phoneNumber || '', // Type assertion for phoneNumber
-  });
-  const [passwordData, setPasswordData] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-  });
-
-  const { error, handleError, clearError, withErrorHandling } = useErrorHandler({
-    context: 'Profile Management'
-  });
+  const [error, setError] = useState('');
   
-  const apiClient = ApiClient.getInstance();
+  const [profileData, setProfileData] = useState<ProfileData>({
+    firstName: user?.firstName || '',
+    lastName: user?.lastName || '',
+    phoneNumber: '',
+  });
 
-  // Update profileData when user data changes
+  const { syncUser } = useAuth();
+
   useEffect(() => {
-    if (auth.user) {
+    if (user) {
       setProfileData({
-        name: auth.user.name || '',
-        phoneNumber: (auth.user as any)?.phoneNumber || '', // Type assertion for phoneNumber
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        phoneNumber: '',
       });
     }
-  }, [auth.user]);
+  }, [user]);
 
-  // Add loading state check after all hooks are declared
-  if (!auth || !auth.user) {
-    return <LoadingState />;
-  }
-
-  const handleProfileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setProfileData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+  const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
   };
 
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await withErrorHandling(async () => {
-      setLoading(true);
+      setIsSubmitting(true);
       setSuccess('');
       
       try {
-        const response = await apiClient.updateProfile(profileData);
+        if (!user) throw new Error('User not authenticated');
         
-        if (response.data) {
-          setSuccess('Profile updated successfully');
-          
-          // Update the user in the auth context
-          if (auth.user) {
-            auth.updateUser({
-              ...auth.user,
-              ...profileData
-            });
-          }
+        let response;
+        const userRole = user.publicMetadata?.role as Role;
+        
+        if (userRole === Role.PATIENT) {
+          response = await patientClient.updateSettings({
+            personalInfo: {
+              firstName: profileData.firstName,
+              lastName: profileData.lastName,
+              dateOfBirth: '', // This should be handled separately
+              phone: profileData.phoneNumber,
+              email: user.emailAddresses[0]?.emailAddress || '',
+              emergencyContact: {
+                name: '',
+                relationship: '',
+                phone: ''
+              }
+            },
+            privacy: {
+              shareDataWithProviders: true,
+              allowImageSharing: true,
+              showProfileToOtherPatients: false,
+              allowAnonymousDataUse: false
+            },
+            notifications: {
+              emailNotifications: true,
+              smsNotifications: true,
+              appointmentReminders: true,
+              imageShareNotifications: true,
+              providerMessages: true,
+              marketingEmails: false
+            },
+            communication: {
+              preferredLanguage: 'en',
+              preferredContactMethod: 'email',
+              preferredAppointmentReminder: 'email'
+            }
+          });
+        } else if (userRole === Role.PROVIDER) {
+          response = await providerClient.updateSettings({
+            personalInfo: {
+              firstName: profileData.firstName,
+              lastName: profileData.lastName,
+              phone: profileData.phoneNumber,
+              email: user.emailAddresses[0]?.emailAddress || '',
+            },
+            providerSettings: {
+              availableForAppointments: true,
+              specialties: [],
+              languages: ['en'],
+              acceptingNewPatients: true
+            }
+          });
         } else {
-          throw new Error('Failed to update profile: No data returned');
+          response = await adminClient.updateSettings({
+            personalInfo: {
+              firstName: profileData.firstName,
+              lastName: profileData.lastName,
+              phone: profileData.phoneNumber,
+              email: user.emailAddresses[0]?.emailAddress || '',
+            },
+            adminSettings: {
+              notificationsEnabled: true,
+              systemAlerts: true,
+              activityReports: true
+            }
+          });
         }
-      } finally {
-        setLoading(false);
-      }
-    });
-  };
 
-  const handlePasswordChange = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (passwordData.newPassword !== passwordData.confirmPassword) {
-      handleError(new Error('New passwords do not match'));
-      return;
-    }
-
-    await withErrorHandling(async () => {
-      setLoading(true);
-      setSuccess('');
-      
-      try {
-        await apiClient.changePassword(
-          passwordData.currentPassword, 
-          passwordData.newPassword
-        );
-        
-        setSuccess('Password updated successfully');
-        setPasswordData({
-          currentPassword: '',
-          newPassword: '',
-          confirmPassword: '',
+        // Update Clerk user data
+        await user.update({
+          firstName: profileData.firstName || null,
+          lastName: profileData.lastName || null,
+          unsafeMetadata: {
+            ...user.unsafeMetadata,
+            phoneNumber: profileData.phoneNumber,
+          },
         });
+
+        // After successful profile update, sync with database
+        await syncUser();
+
+        setSuccess('Profile updated successfully');
+        if (onUpdate) onUpdate(response);
+      } catch (error) {
+        handleError(error);
       } finally {
-        setLoading(false);
+        setIsSubmitting(false);
       }
     });
   };
 
-  const handleTwoFactorToggle = () => {
-    setShowTwoFactorSetup(true);
-  };
-
-  const handleTwoFactorSetup = async (code: string) => {
-    await withErrorHandling(async () => {
-      setLoading(true);
-      
-      try {
-        // First enable 2FA if not already enabled
-        if (!auth.user?.twoFactorEnabled) {
-          await apiClient.toggleTwoFactor(true);
-        }
-        
-        // Then verify with the provided code
-        await apiClient.verifyTwoFactor(code, ''); // The secret would be managed on the server
-        
-        setSuccess('Two-factor authentication enabled successfully');
-        setShowTwoFactorSetup(false);
-      } finally {
-        setLoading(false);
-      }
-    });
-  };
-
-  const handleTwoFactorResend = async () => {
-    await withErrorHandling(async () => {
-      setLoading(true);
-      try {
-        // Disable current 2FA and then re-enable to get a new secret
-        await apiClient.toggleTwoFactor(false);
-        const response = await apiClient.toggleTwoFactor(true);
-        
-        // We don't return the value here as onResend is defined as () => Promise<void>
-        // Just store it in state if needed
-        if (response.data) {
-          // Update any necessary state with the new secret/QR code
-        }
-      } finally {
-        setLoading(false);
-      }
-    });
-  };
+  if (!user) return <LoadingState />;
 
   return (
-    <Grid container spacing={4}>
-      {/* Profile Information */}
-      <Grid item xs={12} md={6}>
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Profile Information
-          </Typography>
-          
-          {error && error.includes('Profile update failed') && (
-            <Alert 
-              severity="error" 
-              sx={{ mb: 2 }}
-              action={
-                <Button 
-                  color="inherit" 
-                  size="small" 
-                  onClick={clearError}
-                >
-                  Dismiss
-                </Button>
-              }
-            >
-              {error}
-            </Alert>
-          )}
-          {success && (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              {success}
-            </Alert>
-          )}
-          
-          <Box component="form" onSubmit={handleProfileSubmit}>
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Name"
-                  name="name"
-                  value={profileData.name}
-                  onChange={handleProfileChange}
-                  disabled={loading}
-                  error={!!error && error.includes('Profile update failed')}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Email"
-                  value={auth.user?.email}
-                  disabled
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Phone Number"
-                  name="phoneNumber"
-                  value={profileData.phoneNumber}
-                  onChange={handleProfileChange}
-                  disabled={loading}
-                  error={!!error && error.includes('Profile update failed')}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Role"
-                  value={auth.user?.role}
-                  disabled
-                />
-              </Grid>
-              {additionalFields}
-              <Grid item xs={12}>
-                <Button 
-                  type="submit" 
-                  variant="contained" 
-                  color="primary" 
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <CircularProgress size={24} sx={{ color: 'white' }} />
-                  ) : (
-                    'Update Profile'
-                  )}
-                </Button>
-              </Grid>
-            </Grid>
-          </Box>
-        </Paper>
-      </Grid>
+    <Box sx={{ maxWidth: 600, mx: 'auto', p: 3 }}>
+      <Tabs value={tabValue} onChange={handleTabChange} sx={{ mb: 3 }}>
+        <Tab label="Profile" />
+        <Tab label="Security" />
+        <Tab label="Notifications" />
+      </Tabs>
 
-      {/* Security Settings */}
-      <Grid item xs={12} md={6}>
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Security Settings
-          </Typography>
-
-          {error && 
-            (error.includes('Password update failed') || 
-             error.includes('Password validation failed')) && (
-            <Alert 
-              severity="error" 
-              sx={{ mb: 2 }}
-              action={
-                <Button 
-                  color="inherit" 
-                  size="small" 
-                  onClick={clearError}
-                >
-                  Dismiss
-                </Button>
-              }
-            >
-              {error}
-            </Alert>
-          )}
-          {success && (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              {success}
-            </Alert>
-          )}
-
-          <Box component="form" onSubmit={handlePasswordChange}>
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  type="password"
-                  label="Current Password"
-                  value={passwordData.currentPassword}
-                  onChange={(e) =>
-                    setPasswordData({ ...passwordData, currentPassword: e.target.value })
-                  }
-                  disabled={loading}
-                  error={!!error && 
-                    (error.includes('Password update failed') || 
-                     error.includes('Password validation failed'))}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  type="password"
-                  label="New Password"
-                  value={passwordData.newPassword}
-                  onChange={(e) =>
-                    setPasswordData({ ...passwordData, newPassword: e.target.value })
-                  }
-                  disabled={loading}
-                  error={!!error && error.includes('Password validation failed')}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  type="password"
-                  label="Confirm New Password"
-                  value={passwordData.confirmPassword}
-                  onChange={(e) =>
-                    setPasswordData({ ...passwordData, confirmPassword: e.target.value })
-                  }
-                  disabled={loading}
-                  error={!!error && error.includes('Password validation failed')}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <Button 
-                  type="submit" 
-                  variant="contained" 
-                  color="primary" 
-                  disabled={loading}
-                >
-                  Change Password
-                </Button>
-              </Grid>
-            </Grid>
-          </Box>
-
-          <Divider sx={{ my: 3 }} />
-
-          <Typography variant="h6" gutterBottom>
-            Two-Factor Authentication
-          </Typography>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={auth.user?.twoFactorEnabled || false}
-                onChange={handleTwoFactorToggle}
-                disabled={loading}
-              />
-            }
-            label="Enable Two-Factor Authentication"
+      {tabValue === 0 && (
+        <Box>
+          <TextField
+            fullWidth
+            label="First Name"
+            value={profileData.firstName}
+            onChange={(e) => setProfileData({ ...profileData, firstName: e.target.value })}
+            sx={{ mb: 2 }}
           />
+          <TextField
+            fullWidth
+            label="Last Name"
+            value={profileData.lastName}
+            onChange={(e) => setProfileData({ ...profileData, lastName: e.target.value })}
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Phone Number"
+            value={profileData.phoneNumber}
+            onChange={(e) => setProfileData({ ...profileData, phoneNumber: e.target.value })}
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Email"
+            value={user.emailAddresses[0]?.emailAddress || ''}
+            disabled
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Role"
+            value={user.publicMetadata?.role || ''}
+            disabled
+            sx={{ mb: 2 }}
+          />
+          {additionalFields}
+          <Box sx={{ mt: 2 }}>
+            <Button
+              onClick={handleProfileSubmit}
+              variant="contained"
+              color="primary"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <CircularProgress size={24} sx={{ color: 'white' }} />
+              ) : (
+                'Update Profile'
+              )}
+            </Button>
+            {success && (
+              <Typography color="success.main" sx={{ mt: 1 }}>
+                {success}
+              </Typography>
+            )}
+            {error && (
+              <Typography color="error" sx={{ mt: 1 }}>
+                {error}
+              </Typography>
+            )}
+          </Box>
+        </Box>
+      )}
 
-          <Dialog 
-            open={showTwoFactorSetup} 
-            onClose={() => setShowTwoFactorSetup(false)}
-            aria-labelledby="two-factor-dialog-title"
-            aria-describedby="two-factor-dialog-description"
-            keepMounted={false}
-          >
-            <DialogContent>
-              <TwoFactorForm
-                email={auth.user?.email || ''}
-                onVerify={handleTwoFactorSetup}
-                onResend={handleTwoFactorResend}
-              />
-            </DialogContent>
-          </Dialog>
-        </Paper>
-      </Grid>
-    </Grid>
+      {tabValue === 1 && (
+        <Box>
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Security Settings
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Security settings are managed through Clerk&apos;s dashboard
+            </Typography>
+          </Box>
+        </Box>
+      )}
+
+      {tabValue === 2 && (
+        <Box>
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Notification Settings
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Manage your notification preferences
+            </Typography>
+          </Box>
+          {/* Add notification settings here */}
+        </Box>
+      )}
+    </Box>
   );
-} 
+}
+
+export default ProfileFormComponent; 

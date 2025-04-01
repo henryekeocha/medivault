@@ -31,8 +31,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ChatList } from '@/components/messages/ChatList';
 import { ChatWindow } from '@/components/messages/ChatWindow';
 import { useQuery } from '@tanstack/react-query';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { providerClient } from '@/lib/api/providerClient';
+import { useUser } from '@clerk/nextjs';
 import { useToast } from '@/contexts/ToastContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState'; 
@@ -94,7 +94,7 @@ export default function ProviderMessagesPage() {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const { handleError, withErrorHandling, clearErrors } = useErrorHandler({
     context: 'Provider Messages',
     showToastByDefault: true
@@ -123,14 +123,14 @@ export default function ProviderMessagesPage() {
     queryKey: ['unread-message-counts'],
     queryFn: async () => {
       try {
-        const response = await ApiClient.getInstance().getUnreadCounts();
+        const response = await providerClient.getUnreadMessageCounts();
         return response.data;
       } catch (error) {
         console.error('Error fetching unread counts:', error);
         throw error;
       }
     },
-    enabled: !!user,
+    enabled: !!user?.id,
     refetchInterval: 30000, // Refresh every 30 seconds
   });
   
@@ -180,14 +180,14 @@ export default function ProviderMessagesPage() {
       const fetchRecipientDetails = async () => {
         try {
           const response = await withErrorHandling(
-            async () => ApiClient.getInstance().getPatientDetails(recipientId),
+            async () => providerClient.getPatientDetails(recipientId),
             { showToast: true }
           );
           
           if (response.data) {
             setSelectedRecipient({
               id: recipientId,
-              name: response.data.name || `${response.data.firstName} ${response.data.lastName}`
+              name: response.data.name || 'Unknown Patient'
             });
             
             // On mobile, hide the chat list when a recipient is selected
@@ -205,6 +205,27 @@ export default function ProviderMessagesPage() {
       fetchRecipientDetails();
     }
   }, [recipientId, isMobile, withErrorHandling]);
+  
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    // Initial load of unread counts
+    refetchUnreadCount();
+  }, [user?.id, refetchUnreadCount]);
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  // Check if user has provider role in metadata
+  const userRole = user.publicMetadata.role;
+  if (userRole !== 'PROVIDER') {
+    return null;
+  }
   
   return (
     <Container maxWidth="xl" sx={{ py: 3, height: 'calc(100vh - 130px)' }}>

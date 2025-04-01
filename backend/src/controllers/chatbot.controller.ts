@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/appError.js';
 import { encryptData, decryptData } from '../middleware/encryption.js';
 import { Role } from '@prisma/client';

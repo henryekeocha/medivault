@@ -30,8 +30,13 @@ import Image from 'next/image';
 import { useToast } from '@/contexts/ToastContext';
 import { routes } from '@/config/routes';
 import type { Route } from 'next';
-import { useSession } from 'next-auth/react';
-import { UserProfileService, UserProfile } from '@/lib/api/services/user-profile.service';
+import { useUser } from '@clerk/nextjs';
+import { userProfileService, type UserProfile } from '@/lib/api/services/user-profile.service';
+import { Role } from '@prisma/client';
+
+interface UserMetadata {
+  role?: Role;
+}
 
 // Tab panel component
 interface TabPanelProps {
@@ -57,7 +62,7 @@ function TabPanel(props: TabPanelProps) {
 }
 
 export default function ProfilePage() {
-  const { data: session, status, update: updateSession } = useSession();
+  const { user, isLoaded } = useUser();
   const router = useRouter();
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -69,14 +74,16 @@ export default function ProfilePage() {
   const [formValues, setFormValues] = useState<Partial<UserProfile>>({});
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Update the service instantiation
-  const userProfileService = UserProfileService.getInstance();
-
   // Update the profile loading effect
   useEffect(() => {
-    if (session?.user) {
+    if (user) {
       const loadProfile = async () => {
         try {
+          // Set the user role before getting the profile
+          const userMetadata = user.publicMetadata as UserMetadata;
+          const role = userMetadata?.role || 'PATIENT';
+          userProfileService.setUserRole(role === 'PROVIDER' ? 'PROVIDER' : 'PATIENT');
+          
           const profileData = await userProfileService.getCurrentUserProfile();
           setProfile(profileData);
           setFormValues({
@@ -95,7 +102,7 @@ export default function ProfilePage() {
       };
       loadProfile();
     }
-  }, [session, showToast]);
+  }, [user, showToast]);
 
   // Calculate profile completion
   const calculateProfileCompletion = (): number => {
@@ -154,11 +161,6 @@ export default function ProfilePage() {
       setSaving(true);
       await userProfileService.updateProfile(formValues);
       
-      // Update session data if name or email changed
-      if (formValues.name !== session?.user?.name || formValues.email !== session?.user?.email) {
-        await updateSession();
-      }
-      
       // Refresh profile data
       const updatedProfile = await userProfileService.getCurrentUserProfile();
       setProfile(updatedProfile);
@@ -173,7 +175,7 @@ export default function ProfilePage() {
     }
   };
 
-  if (status === 'loading') {
+  if (!isLoaded) {
     return (
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
         <LinearProgress color="primary" />
@@ -184,7 +186,7 @@ export default function ProfilePage() {
     );
   }
 
-  if (!session) {
+  if (!user) {
     router.push(routes.root.login as Route);
     return null;
   }
@@ -193,7 +195,7 @@ export default function ProfilePage() {
     setTabValue(newValue);
   };
 
-  const handleInputChange = (field: keyof typeof formValues, value: string) => {
+  const handleInputChange = (field: keyof UserProfile, value: string) => {
     setFormValues({ ...formValues, [field]: value });
     
     // Clear validation error when field is edited
@@ -228,15 +230,15 @@ export default function ProfilePage() {
           <Card sx={{ mb: 3 }}>
             <CardContent sx={{ textAlign: 'center' }}>
               <Avatar
-                alt={session.user?.name || 'User'}
+                alt={user.firstName || 'User'}
                 src={profile?.image || ''}
                 sx={{ width: 120, height: 120, margin: '0 auto 16px' }}
               />
               <Typography variant="h5" gutterBottom>
-                {session.user?.name || 'Your Name'}
+                {user.firstName || 'Your Name'}
               </Typography>
               <Typography variant="body2" color="text.secondary" gutterBottom>
-                {session.user?.email || 'email@example.com'}
+                {user.primaryEmailAddress?.emailAddress || 'email@example.com'}
               </Typography>
               
               <Box sx={{ mt: 2, mb: 2 }}>
@@ -252,8 +254,8 @@ export default function ProfilePage() {
                   <Grid item xs={6}>
                     <Chip 
                       size="small" 
-                      color={profile?.emailVerified ? "success" : "error"}
-                      label={profile?.emailVerified ? "Yes" : "No"}
+                      color={user.primaryEmailAddress?.verification?.status === 'verified' ? "success" : "error"}
+                      label={user.primaryEmailAddress?.verification?.status === 'verified' ? "Yes" : "No"}
                     />
                   </Grid>
                   {profile?.phoneNumber && (
@@ -281,7 +283,7 @@ export default function ProfilePage() {
                     <Chip 
                       size="small" 
                       color="primary" 
-                      label={session.user?.role || 'User'} 
+                      label={((user.publicMetadata as UserMetadata).role) || 'User'} 
                     />
                   </Grid>
                 </Grid>
@@ -320,9 +322,9 @@ export default function ProfilePage() {
                         setEditMode(false);
                         // Reset form values to current session data
                         setFormValues({
-                          name: session.user?.name || '',
-                          email: session.user?.email || '',
-                          role: session.user?.role || '',
+                          name: user.firstName || '',
+                          email: user.primaryEmailAddress?.emailAddress || '',
+                          role: ((user.publicMetadata as UserMetadata).role) || undefined,
                         });
                         setValidationErrors({});
                       }}
@@ -417,8 +419,27 @@ export default function ProfilePage() {
               <Box sx={{ mb: 3 }}>
                 <Alert severity="success">
                   <AlertTitle>Verified</AlertTitle>
-                  Your email address ({session.user?.email}) is verified.
+                  Your email address ({user.primaryEmailAddress?.emailAddress}) is verified.
                 </Alert>
+              </Box>
+              
+              <Divider sx={{ my: 3 }} />
+              
+              <Typography variant="h6" gutterBottom>
+                Multi-Factor Authentication
+              </Typography>
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="body1" paragraph>
+                  Enhance your account security by enabling multi-factor authentication.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  onClick={() => router.push('/profile/mfa' as Route)}
+                  startIcon={<EditIcon />}
+                >
+                  Manage MFA Settings
+                </Button>
               </Box>
               
               <Divider sx={{ my: 3 }} />

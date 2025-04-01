@@ -27,10 +27,9 @@ import {
   MedicalInformation as DicomIcon,
 } from '@mui/icons-material';
 import { ImageType } from '@prisma/client';
-import { apiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
-import { ImageService } from '@/lib/api/services/image.service';
+import { imageService } from '@/lib/api/services/image.service';
 
 // Custom type to extend the Prisma ImageType enum with DICOM
 type ExtendedImageType = ImageType | 'DICOM';
@@ -55,7 +54,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   onUploadComplete,
   onCancel,
 }) => {
-  const { user } = useAuth();
+  const { data: session } = useSession();
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -74,13 +73,17 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
   const [isDicom, setIsDicom] = useState(false);
   const [showDicomOptions, setShowDicomOptions] = useState(false);
   
-  const imageService = ImageService.getInstance();
-
   // Initialize error handler - only declare once
   const { error, handleError, clearError } = useErrorHandler({
     context: 'Image upload',
     showToastByDefault: true
   });
+
+  useEffect(() => {
+    if (session?.user?.role && (session.user.role === 'PATIENT' || session.user.role === 'PROVIDER')) {
+      imageService.setUserRole(session.user.role);
+    }
+  }, [session?.user?.role]);
 
   // Function to check if a file is a DICOM file
   const checkIfDicom = useCallback((file: File) => {
@@ -161,24 +164,12 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
         imageMetadata.studyDate = new Date(metadata.studyDate);
       }
       
-      const onProgressUpdate = (progressEvent: any) => {
-        const percentCompleted = Math.round(
-          (progressEvent.loaded * 100) / (progressEvent.total || 100)
-        );
-        setProgress(percentCompleted);
+      const onProgressUpdate = (progress: number) => {
+        setProgress(progress);
       };
       
-      // Use the appropriate upload method based on file type
-      let response;
-      if (isDicom || metadata.type === 'DICOM') {
-        response = await imageService.uploadDicomImage(files[0], imageMetadata, onProgressUpdate);
-      } else {
-        response = await apiClient.uploadImage(
-          files[0],
-          imageMetadata,
-          onProgressUpdate
-        );
-      }
+      // Use unified uploadImage method
+      const response = await imageService.uploadImage(files[0], imageMetadata, onProgressUpdate);
       
       if (response.status !== 'success' || !response.data) {
         throw new Error(response.error?.message || 'Upload failed');

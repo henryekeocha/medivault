@@ -2,7 +2,7 @@ import { AppError } from '../utils/appError.js';
 import { OpenAI } from 'openai';
 import sharp from 'sharp';
 import { ChatCompletionContentPart, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import type { Image, AuditLog } from '@prisma/client';
 import fetch from 'node-fetch';
 import crypto from 'crypto';
@@ -154,12 +154,12 @@ export class ImageAnalysisService {
         data: {
           userId,
           action: 'IMAGE_ANALYSIS',
-          details: {
+          details: JSON.stringify({
             confidence,
             findingsCount: findings.length,
             processingTime: result.processingTime,
             hasTemporalAnalysis: !!temporalChanges
-          }
+          })
         }
       });
 

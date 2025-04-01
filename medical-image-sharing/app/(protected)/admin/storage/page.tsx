@@ -40,15 +40,16 @@ import {
   Storage as StorageIcon,
   DeleteSweep as DeleteSweepIcon,
   Refresh as RefreshIcon,
-  CloudDownload as CloudDownloadIcon,
+  CloudDownload as CloudDownloadIcon, 
   BarChart as BarChartIcon,
   PieChart as PieChartIcon,
   Info as InfoIcon,
   Check as CheckIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
+import { sharedClient } from '@/lib/api/sharedClient';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import { Role } from '@prisma/client';
 
 // Define interfaces for storage data
@@ -81,8 +82,8 @@ interface CleanupOptions {
 }
 
 export default function AdminStoragePage() {
+  const { user, isLoaded } = useUser();
   const router = useRouter();
-  const { user, isAuthenticated } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -102,8 +103,7 @@ export default function AdminStoragePage() {
     setError('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getStorageStats();
+      const response = await adminClient.getStorageStats();
       
       if (response.status === 'success') {
         setStorageStats(response.data);
@@ -120,18 +120,22 @@ export default function AdminStoragePage() {
 
   // Check if user is authorized and fetch storage statistics
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isLoaded) return;
+
+    if (!user) {
       router.push('/auth/login');
       return;
     }
 
-    if (user?.role !== Role.ADMIN) {
+    // Check if user has admin role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'ADMIN') {
       router.push('/dashboard');
       return;
     }
     
     fetchStorageStats();
-  }, [isAuthenticated, user?.role, router]);
+  }, [isLoaded, user, router]);
 
   // Handle opening cleanup dialog
   const handleOpenCleanupDialog = () => {
@@ -153,7 +157,7 @@ export default function AdminStoragePage() {
   };
 
   // Handle cleanup options changes
-  const handleCleanupOptionChange = (key: keyof CleanupOptions, value: any) => {
+  const handleCleanupOptionChange = (key: keyof CleanupOptions, value: CleanupOptions[keyof CleanupOptions]) => {
     setCleanupOptions({
       ...cleanupOptions,
       [key]: value,
@@ -202,8 +206,11 @@ export default function AdminStoragePage() {
     setSuccess('');
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.cleanupStorage(cleanupOptions);
+      const response = await adminClient.cleanupStorage({
+        olderThan: cleanupOptions.olderThan,
+        types: cleanupOptions.types,
+        status: cleanupOptions.status
+      });
       
       if (response.status === 'success') {
         setSuccess(`Cleanup completed. ${response.data.deletedCount} files removed, freeing ${response.data.freedSpace} MB of storage.`);

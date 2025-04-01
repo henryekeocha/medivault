@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { ApiError, ApiResponse } from './types';
-import { getSession } from 'next-auth/react';
+import { useAuth } from '@clerk/nextjs';
 
 class Api {
   private client: AxiosInstance;
@@ -20,10 +20,11 @@ class Api {
     // Request interceptor
     this.client.interceptors.request.use(
       async (config) => {
-        // Get session from NextAuth
-        const session = await getSession();
-        if (session?.accessToken) {
-          config.headers.Authorization = `Bearer ${session.accessToken}`;
+        // Get token from Clerk
+        const { getToken } = useAuth();
+        const token = await getToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
         }
         return config;
       },
@@ -37,8 +38,8 @@ class Api {
       (response) => response,
       (error: AxiosError<ApiError>) => {
         if (error.response?.status === 401) {
-          // Handle unauthorized access - NextAuth will handle redirecting
-          window.location.href = '/auth/login';
+          // Handle unauthorized access - redirect to Clerk sign-in
+          window.location.href = '/sign-in';
         }
         return Promise.reject(this.handleError(error));
       }

@@ -28,92 +28,83 @@ import {
   Cell,
 } from 'recharts';
 import { Analytics as AnalyticsIcon } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { providerClient } from '@/lib/api/providerClient';
+import { useUser } from '@clerk/nextjs';
 import { ApiResponse } from '@/lib/api/types';
 import { PaginatedResponse } from '@/lib/api/types';
 
+interface AnalyticsData {
+  totalPatients: number;
+  totalImages: number;
+  totalShares: number;
+  recentActivity: Array<{
+    timestamp: string;
+    type: string;
+    details?: {
+      imageType?: string;
+    };
+  }>;
+}
+
+interface ActivityData {
+  month: string;
+  active: number;
+  new: number;
+}
+
+interface ImageTypeData {
+  name: string;
+  value: number;
+}
+
 export default function ProviderAnalytics() {
   const theme = useTheme();
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   // Data states
-  const [patientActivityData, setPatientActivityData] = useState<any[]>([]); 
-  const [imageTypeData, setImageTypeData] = useState<any[]>([]);
+  const [patientActivityData, setPatientActivityData] = useState<ActivityData[]>([]); 
+  const [imageTypeData, setImageTypeData] = useState<ImageTypeData[]>([]);
   const [monthlyImageData, setMonthlyImageData] = useState<any[]>([]);
-  const [stats, setStats] = useState<any[]>([]);
+  const [stats, setStats] = useState<Array<{ title: string; value: string }>>([]);
 
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!isLoaded) return;
+
+    if (!user) {
+      return;
+    }
+
+    // Check if user has provider role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'PROVIDER') {
+      return;
+    }
     
     async function fetchAnalyticsData() {
       try {
         setLoading(true);
-        const apiClient = ApiClient.getInstance();
         
         // Fetch provider statistics for summary stats
-        const statsResponse = await apiClient.getProviderStatistics(user?.id || '');
+        const statsResponse = await providerClient.getProviderStatistics();
         if (statsResponse.status === 'success') {
-          const { totalPatients = 0, totalImages = 0, totalShares = 0, recentActivity = [] } = statsResponse.data || {};
+          const data = statsResponse.data;
+          const { totalPatients = 0, totalAppointments = 0, totalMedicalRecords = 0 } = data;
           
           setStats([
             { title: 'Total Patients', value: totalPatients.toString() },
-            { title: 'Total Images', value: totalImages.toString() },
-            { title: 'Total Shares', value: totalShares.toString() },
-            { title: 'Recent Activity', value: recentActivity.length.toString() },
+            { title: 'Total Appointments', value: totalAppointments.toString() },
+            { title: 'Medical Records', value: totalMedicalRecords.toString() },
+            { title: 'Active Patients', value: '0' }, // This will be updated when we add patient status tracking
           ]);
 
-          // Process recent activity for the chart
-          const activityByMonth = recentActivity.reduce((acc: any, activity: any) => {
-            const month = new Date(activity.timestamp).toLocaleString('default', { month: 'short' });
-            if (!acc[month]) {
-              acc[month] = { month, active: 0, new: 0 };
-            }
-            if (activity.type === 'NEW_PATIENT') {
-              acc[month].new++;
-            } else {
-              acc[month].active++;
-            }
-            return acc;
-          }, {});
-
-          setPatientActivityData(Object.values(activityByMonth));
-
-          // Process image types for the pie chart
-          const imageTypes = recentActivity
-            .filter((activity: any) => activity.type === 'IMAGE_UPLOAD')
-            .reduce((acc: any, activity: any) => {
-              const type = activity.details?.imageType || 'Unknown';
-              acc[type] = (acc[type] || 0) + 1;
-              return acc;
-            }, {});
-
-          setImageTypeData(
-            Object.entries(imageTypes).map(([name, value]) => ({
-              name,
-              value
-            }))
-          );
-
-          // Process monthly image uploads
-          const monthlyUploads = recentActivity
-            .filter((activity: any) => activity.type === 'IMAGE_UPLOAD')
-            .reduce((acc: any, activity: any) => {
-              const month = new Date(activity.timestamp).toLocaleString('default', { month: 'short' });
-              acc[month] = (acc[month] || 0) + 1;
-              return acc;
-            }, {});
-
-          setMonthlyImageData(
-            Object.entries(monthlyUploads).map(([month, uploads]) => ({
-              month,
-              uploads
-            }))
-          );
+          // Since we don't have activity data yet, we'll set empty arrays
+          setPatientActivityData([]);
+          setImageTypeData([]);
+          setMonthlyImageData([]);
         }
         
         setError(null);
@@ -126,14 +117,14 @@ export default function ProviderAnalytics() {
     }
     
     fetchAnalyticsData();
-  }, [user?.id]);
+  }, [isLoaded, user]);
 
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <CircularProgress />
-      </Box>
-    );
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
   }
 
   return (

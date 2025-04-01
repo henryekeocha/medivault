@@ -13,8 +13,13 @@
 }
 
 @layer base {
+  :root {
+    color: var(--foreground);
+    background-color: var(--background);
+  }
+
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply antialiased;
   }
 }
 

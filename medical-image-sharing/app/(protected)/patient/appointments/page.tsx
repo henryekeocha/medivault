@@ -19,8 +19,8 @@ import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
 import AppointmentList from '@/components/appointments/AppointmentList';
 import AppointmentForm from '@/components/appointments/AppointmentForm';
 import AppointmentDetail from '@/components/appointments/AppointmentDetail';
-import { useAuth } from '@/contexts/AuthContext';
-import { ApiClient } from '@/lib/api/client';
+import { useUser } from '@clerk/nextjs';
+import { patientClient } from '@/lib/api/patientClient';
 
 /**
  * The Appointment interface used in this page component.
@@ -45,7 +45,7 @@ interface Appointment {
 }
 
 export default function PatientAppointmentsPage() {
-  const { user } = useAuth();
+  const { user, isLoaded } = useUser();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
@@ -124,8 +124,7 @@ export default function PatientAppointmentsPage() {
       // Optionally fetch and display the newly created appointment details
       const fetchNewAppointment = async () => {
         try {
-          const apiClient = ApiClient.getInstance();
-          const response = await apiClient.getAppointment(appointmentId);
+          const response = await patientClient.getAppointment(appointmentId);
           if (response.status === 'success' && response.data) {
             // Convert the appointment to ensure type compatibility
             const convertedAppointment = convertAppointmentData(response.data);
@@ -146,6 +145,14 @@ export default function PatientAppointmentsPage() {
     setRefreshTrigger(prev => prev + 1);
     setDetailDialogOpen(false);
   };
+
+  if (!isLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <Box sx={{ p: 3 }}>
@@ -205,7 +212,7 @@ export default function PatientAppointmentsPage() {
         <DialogContent>
           <AppointmentForm
             onSuccess={handleAppointmentSuccess}
-            patientId={user?.id}
+            patientId={user.id}
           />
         </DialogContent>
       </Dialog>
@@ -230,9 +237,14 @@ export default function PatientAppointmentsPage() {
           {selectedAppointment && (
             <AppointmentForm
               editMode
-              initialData={selectedAppointment}
+              initialData={{
+                ...selectedAppointment,
+                scheduledFor: selectedAppointment.scheduledFor instanceof Date 
+                  ? selectedAppointment.scheduledFor.toISOString()
+                  : selectedAppointment.scheduledFor,
+              }}
               onSuccess={handleAppointmentSuccess}
-              patientId={user?.id}
+              patientId={user.id}
             />
           )}
         </DialogContent>

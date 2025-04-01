@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
-import { useAuth } from '@/contexts/AuthContext';
+import Link, { LinkProps as NextLinkProps } from 'next/link';
+import { useUser } from '@clerk/nextjs';
+import { useRouter } from 'next/navigation';
 import { UserRole } from '@/types';
 import {
   Container,
@@ -24,18 +25,19 @@ interface AdminSection {
   title: string;
   description: string;
   icon: React.ElementType;
-  href: string;
+  href: NextLinkProps<{}>['href'];
 }
 
 export default function AdminPage() {
-  const auth = useAuth();
+  const { user, isLoaded } = useUser();
+  const router = useRouter();
 
   // Redirect if not admin
   React.useEffect(() => {
-    if (!auth.isAuthenticated || auth.user?.role !== ('admin' as UserRole)) {
-      window.location.href = '/auth/login';
+    if (isLoaded && (!user || user.publicMetadata.role !== 'ADMIN')) {
+      router.push('/auth/login');
     }
-  }, [auth]);
+  }, [user, isLoaded, router]);
 
   const adminSections: AdminSection[] = [
     {
@@ -64,20 +66,32 @@ export default function AdminPage() {
     },
   ];
 
+  if (!isLoaded) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Typography>Loading...</Typography>
+      </Container>
+    );
+  }
+
+  if (!user || user.publicMetadata.role !== 'ADMIN') {
+    return null;
+  }
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
+      <Typography variant="h4" gutterBottom>
         Admin Dashboard
       </Typography>
       <Grid container spacing={3}>
         {adminSections.map((section) => (
-          <Grid item xs={12} sm={6} md={4} key={section.title}>
-            <Card>
-              <Link href={section.href as any} passHref style={{ textDecoration: 'none' }}>
+          <Grid item xs={12} sm={6} md={3} key={section.title}>
+            <Link href={section.href} passHref style={{ textDecoration: 'none' }}>
+              <Card>
                 <CardActionArea>
                   <CardContent>
-                    <section.icon className="h-8 w-8 text-blue-600 dark:text-blue-400 mb-4" />
-                    <Typography variant="h6" component="h2">
+                    <section.icon style={{ width: 40, height: 40, marginBottom: 8 }} />
+                    <Typography variant="h6" gutterBottom>
                       {section.title}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -85,8 +99,8 @@ export default function AdminPage() {
                     </Typography>
                   </CardContent>
                 </CardActionArea>
-              </Link>
-            </Card>
+              </Card>
+            </Link>
           </Grid>
         ))}
       </Grid>

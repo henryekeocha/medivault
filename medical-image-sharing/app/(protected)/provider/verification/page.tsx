@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import {
   Box,
   Button,
@@ -42,8 +43,7 @@ import {
   Refresh as RefreshIcon,
   Warning as WarningIcon,
 } from '@mui/icons-material';
-import { useAuth } from '@/contexts/AuthContext';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { formatDistance } from 'date-fns';
 import ProviderSpecialties from '@/config/specialties';
 
@@ -81,6 +81,7 @@ const STATES = [
 ];
 
 export default function ProviderVerificationPage() {
+  const { user, isLoaded } = useUser();
   const [activeStep, setActiveStep] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
@@ -108,30 +109,18 @@ export default function ProviderVerificationPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  const { user, isAuthenticated } = useAuth();
   const router = useRouter();
   
-  // Check if the user is authenticated and is a provider
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/auth/login');
-      return;
-    }
+    if (!isLoaded || !user) return;
     
-    if (user?.role !== 'PROVIDER') {
-      router.push('/dashboard');
-      return;
-    }
-    
-    // Load existing verification data if available
     fetchVerificationData();
-  }, [isAuthenticated, user, router]);
+  }, [isLoaded, user]);
   
   const fetchVerificationData = async () => {
     try {
       setIsLoading(true);
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getProviderVerification();
+      const response = await providerClient.getProviderVerification();
       
       if (response.status === 'success' && response.data) {
         // Map the data from API to our state format
@@ -330,11 +319,10 @@ export default function ProviderVerificationPage() {
       ]);
       
       // 2. Send verification data to API
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.submitProviderVerification({
+      const response = await providerClient.submitProviderVerification({
         licenseNumber: verificationData.licenseNumber,
         licenseState: verificationData.licenseState,
-        licenseExpiryDate: verificationData.licenseExpiryDate as Date,
+        licenseExpiryDate: verificationData.licenseExpiryDate?.toISOString() || '',
         specialtyName: verificationData.specialty,
         identityDocumentS3Key: uploads[0],
         licenseDocumentS3Key: uploads[1],
@@ -356,9 +344,7 @@ export default function ProviderVerificationPage() {
   };
   
   const uploadFile = async (file: File | null, prefix: string): Promise<string> => {
-    if (!file || !user) {
-      throw new Error(`${prefix} file is required`);
-    }
+    if (!file || !user) return '';
     
     try {
       // Create a unique key for the file
@@ -468,15 +454,14 @@ export default function ProviderVerificationPage() {
               ...prev, 
               licenseExpiryDate: date as Date | null 
             }))}
-            renderInput={(params) => (
-              <TextField 
-                {...params} 
-                fullWidth 
-                error={!!errors.licenseExpiryDate}
-                helperText={errors.licenseExpiryDate || params.helperText}
-                required
-              />
-            )}
+            slotProps={{
+              textField: {
+                fullWidth: true,
+                error: !!errors.licenseExpiryDate,
+                helperText: errors.licenseExpiryDate,
+                required: true
+              }
+            }}
           />
         </LocalizationProvider>
       </Grid>

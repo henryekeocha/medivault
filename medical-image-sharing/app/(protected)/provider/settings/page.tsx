@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, ReactElement } from 'react';
 import {
   Container,
   Typography,
@@ -10,10 +10,7 @@ import {
   Button,
   Switch,
   FormControlLabel,
-  Divider,
   Box,
-  Card,
-  CardContent,
   Alert,
   Select,
   MenuItem,
@@ -21,299 +18,402 @@ import {
   InputLabel,
   List,
   ListItem,
-  ListItemText, 
-  ListItemSecondaryAction,
-  IconButton,
+  ListItemText,
+  CircularProgress,
+  Snackbar,
 } from '@mui/material';
 import {
   Save as SaveIcon,
-  Add as AddIcon,
-  Delete as DeleteIcon,
 } from '@mui/icons-material';
+import { providerClient } from '@/lib/api/providerClient';
+import { User, UserPreferences } from '@/lib/api/types';
+import { ClerkAuthService } from '@/lib/clerk/auth-service';
+import { useUser } from '@clerk/nextjs';
+import { PracticeInfoForm } from './components/PracticeInfoForm';
+import { NotificationSettingsForm } from './components/NotificationSettingsForm';
+import { SecuritySettingsForm } from './components/SecuritySettingsForm';
+import { ImageSharingSettingsForm } from './components/ImageSharingSettingsForm';
+import { AvailabilitySettingsForm } from './components/AvailabilitySettingsForm';
 
-export default function ProviderSettingsPage() {
+interface PracticeInfo {
+  practiceName: string;
+  address: string;
+  phone: string; 
+  email: string;
+  website: string;
+  licenseNumber: string;
+}
+
+interface NotificationSettings {
+  emailNotifications: boolean;
+  smsNotifications: boolean;
+  appointmentReminders: boolean;
+  imageUploadAlerts: boolean;
+  systemUpdates: boolean;
+  newPatientAlerts: boolean;
+}
+
+interface SecuritySettings {
+  twoFactorAuth: boolean;
+  requirePatientVerification: boolean;
+  ipWhitelist: string[];
+  autoLogoutMinutes: number;
+}
+
+interface ImageSharingSettings {
+  defaultLinkExpiry: number;
+  requirePatientConsent: boolean;
+  watermarkImages: boolean;
+  allowDownloads: boolean;
+  compressionQuality: 'low' | 'medium' | 'high';
+}
+
+interface AvailabilitySettings {
+  workingHours: {
+    [key: string]: {
+      start: string;
+      end: string;
+      available: boolean;
+    };
+  };
+  appointmentDuration: number;
+  bufferTime: number;
+}
+
+export default function ProviderSettingsPage(): ReactElement {
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [provider, setProvider] = useState<User | null>(null);
+  const { user } = useUser();
+  const [mfaSetup, setMfaSetup] = useState({
+    qrCode: '',
+    backupCodes: [] as string[],
+    isSetupComplete: false,
+  });
+
   // Practice Information
-  const [practiceInfo, setPracticeInfo] = useState({
-    practiceName: 'Medical Clinic',
-    address: '123 Medical Dr',
-    phone: '(555) 123-4567',
-    email: 'info@clinic.com',
-    website: 'www.clinic.com',
-    licenseNumber: 'MC123456',
+  const [practiceInfo, setPracticeInfo] = useState<PracticeInfo>({
+    practiceName: '',
+    address: '',
+    phone: '',
+    email: '',
+    website: '',
+    licenseNumber: '',
   });
 
   // Notification Settings
-  const [notifications, setNotifications] = useState({
-    emailNotifications: true,
+  const [notifications, setNotifications] = useState<NotificationSettings>({
+    emailNotifications: false,
     smsNotifications: false,
-    newPatientAlerts: true,
-    imageUploadAlerts: true,
-    appointmentReminders: true,
-    systemUpdates: true,
+    appointmentReminders: false,
+    imageUploadAlerts: false,
+    systemUpdates: false,
+    newPatientAlerts: false,
   });
 
   // Security Settings
-  const [security, setSecurity] = useState({
-    twoFactorAuth: true,
-    requirePatientVerification: true,
+  const [security, setSecurity] = useState<SecuritySettings>({
+    twoFactorAuth: false,
+    requirePatientVerification: false,
+    ipWhitelist: [],
     autoLogoutMinutes: 30,
-    ipWhitelist: ['192.168.1.*'],
   });
 
   // Image Sharing Settings
-  const [imageSharing, setImageSharing] = useState({
+  const [imageSharing, setImageSharing] = useState<ImageSharingSettings>({
     defaultLinkExpiry: 7,
     requirePatientConsent: true,
     watermarkImages: true,
     allowDownloads: true,
-    compressionQuality: 'high',
+    compressionQuality: 'medium',
   });
 
   // Availability Settings
-  const [availability, setAvailability] = useState({
+  const [availability, setAvailability] = useState<AvailabilitySettings>({
     workingHours: {
       monday: { start: '09:00', end: '17:00', available: true },
       tuesday: { start: '09:00', end: '17:00', available: true },
       wednesday: { start: '09:00', end: '17:00', available: true },
       thursday: { start: '09:00', end: '17:00', available: true },
       friday: { start: '09:00', end: '17:00', available: true },
-      saturday: { start: '10:00', end: '14:00', available: false },
-      sunday: { start: '10:00', end: '14:00', available: false },
+      saturday: { start: '09:00', end: '13:00', available: false },
+      sunday: { start: '09:00', end: '13:00', available: false },
     },
     appointmentDuration: 30,
     bufferTime: 15,
   });
 
-  const handleSave = () => {
-    // TODO: Implement settings save
-    console.log('Saving settings...');
+  useEffect(() => {
+    fetchProviderSettings();
+  }, []);
+
+  const fetchProviderSettings = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await providerClient.getUserProfile();
+
+      if (response.status === 'success' && response.data) {
+        const user = response.data;
+        setProvider(user);
+
+        // Update practice info
+        setPracticeInfo({
+          practiceName: user.name || '',
+          address: user.address || '',
+          phone: user.phoneNumber || '',
+          email: user.email || '',
+          website: user.website || '',
+          licenseNumber: user.licenseNumber || '',
+        });
+
+        // Update notification settings
+        setNotifications({
+          emailNotifications: user.preferences?.emailNotifications || false,
+          smsNotifications: user.preferences?.smsNotifications || false,
+          appointmentReminders: user.preferences?.pushNotifications || false,
+          imageUploadAlerts: user.preferences?.pushNotifications || false,
+          systemUpdates: user.preferences?.emailNotifications || false,
+          newPatientAlerts: user.preferences?.pushNotifications || false,
+        });
+
+        // Update security settings
+        setSecurity({
+          twoFactorAuth: user.mfaEnabled || false,
+          requirePatientVerification: user.preferences?.pushNotifications || false,
+          ipWhitelist: [],
+          autoLogoutMinutes: 30,
+        });
+
+        // Update image sharing settings
+        setImageSharing({
+          defaultLinkExpiry: 7,
+          requirePatientConsent: true,
+          watermarkImages: false,
+          allowDownloads: false,
+          compressionQuality: 'medium',
+        });
+
+        // Update availability settings
+        setAvailability({
+          workingHours: user.workingHours || {
+            monday: { start: '09:00', end: '17:00', available: true },
+            tuesday: { start: '09:00', end: '17:00', available: true },
+            wednesday: { start: '09:00', end: '17:00', available: true },
+            thursday: { start: '09:00', end: '17:00', available: true },
+            friday: { start: '09:00', end: '17:00', available: true },
+            saturday: { start: '09:00', end: '13:00', available: false },
+            sunday: { start: '09:00', end: '13:00', available: false },
+          },
+          appointmentDuration: 30,
+          bufferTime: 15,
+        });
+
+        // Check MFA status
+        if (user) {
+          const mfaStatus = await ClerkAuthService.getMFAStatus();
+          setSecurity(prev => ({
+            ...prev,
+            twoFactorAuth: mfaStatus.enabled || false,
+          }));
+        }
+      } else {
+        setError(response.error?.message || 'Failed to fetch settings');
+        console.error('Failed to fetch settings:', response);
+      }
+    } catch (err) {
+      setError('An error occurred while fetching settings');
+      console.error('Error fetching settings:', err);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+
+      // Update user profile
+      const updateData: Partial<User> = {
+        name: practiceInfo.practiceName,
+        email: practiceInfo.email,
+        phoneNumber: practiceInfo.phone,
+        address: practiceInfo.address,
+        website: practiceInfo.website,
+        licenseNumber: practiceInfo.licenseNumber,
+        preferences: {
+          emailNotifications: notifications.emailNotifications,
+          pushNotifications: notifications.appointmentReminders,
+          smsNotifications: notifications.smsNotifications,
+          theme: 'light',
+          language: 'en'
+        },
+        workingHours: availability.workingHours,
+      };
+
+      const response = await providerClient.updateUserProfile(updateData);
+
+      if (response.status === 'success') {
+        setSuccess('Settings saved successfully');
+        fetchProviderSettings(); // Refresh settings
+      } else {
+        setError(response.error?.message || 'Failed to save settings');
+        console.error('Failed to save settings:', response);
+      }
+    } catch (err) {
+      setError('An error occurred while saving settings');
+      console.error('Error saving settings:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCloseSnackbar = () => {
+    setError(null);
+    setSuccess(null);
+  };
+
+  // Handle MFA setup
+  const handleMfaSetup = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.setupMFA('authenticator');
+      
+      if (result.success && result.qrCode && result.backupCodes) {
+        setMfaSetup({
+          qrCode: result.qrCode,
+          backupCodes: result.backupCodes,
+          isSetupComplete: false,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to setup MFA');
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to setup MFA');
+    }
+  };
+
+  // Handle MFA verification
+  const handleMfaVerification = async (code: string) => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.verifyMFA(code);
+      
+      if (result.success) {
+        setSecurity(prev => ({ ...prev, twoFactorAuth: true }));
+        setMfaSetup(prev => ({ ...prev, isSetupComplete: true }));
+      } else {
+        throw new Error('Invalid verification code');
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to verify MFA code');
+    }
+  };
+
+  // Handle MFA disable
+  const handleMfaDisable = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.disableMFA('authenticator');
+      
+      if (result.success) {
+        setSecurity(prev => ({ ...prev, twoFactorAuth: false }));
+        setMfaSetup({
+          qrCode: '',
+          backupCodes: [],
+          isSetupComplete: false,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to disable MFA');
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to disable MFA');
+    }
+  };
+
+  if (loading) {
+    return (
+      <Container maxWidth="lg">
+        <div className="flex justify-center items-center h-screen">
+          <CircularProgress />
+        </div>
+      </Container>
+    );
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Provider Settings
-      </Typography>
-
-      <Grid container spacing={3}>
-        {/* Practice Information */}
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Practice Information
-            </Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Practice Name"
-                  value={practiceInfo.practiceName}
-                  onChange={(e) => setPracticeInfo({ ...practiceInfo, practiceName: e.target.value })}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="License Number"
-                  value={practiceInfo.licenseNumber}
-                  onChange={(e) => setPracticeInfo({ ...practiceInfo, licenseNumber: e.target.value })}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Address"
-                  value={practiceInfo.address}
-                  onChange={(e) => setPracticeInfo({ ...practiceInfo, address: e.target.value })}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="Phone"
-                  value={practiceInfo.phone}
-                  onChange={(e) => setPracticeInfo({ ...practiceInfo, phone: e.target.value })}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="Email"
-                  value={practiceInfo.email}
-                  onChange={(e) => setPracticeInfo({ ...practiceInfo, email: e.target.value })}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="Website"
-                  value={practiceInfo.website}
-                  onChange={(e) => setPracticeInfo({ ...practiceInfo, website: e.target.value })}
-                />
-              </Grid>
-            </Grid>
-          </Paper>
-        </Grid>
-
-        {/* Notification Settings */}
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, height: '100%' }}>
-            <Typography variant="h6" gutterBottom>
-              Notification Preferences
-            </Typography>
-            <List>
-              <ListItem>
-                <ListItemText primary="Email Notifications" />
-                <Switch
-                  checked={notifications.emailNotifications}
-                  onChange={(e) => setNotifications({ ...notifications, emailNotifications: e.target.checked })}
-                />
-              </ListItem>
-              <ListItem>
-                <ListItemText primary="SMS Notifications" />
-                <Switch
-                  checked={notifications.smsNotifications}
-                  onChange={(e) => setNotifications({ ...notifications, smsNotifications: e.target.checked })}
-                />
-              </ListItem>
-              <ListItem>
-                <ListItemText primary="New Patient Alerts" />
-                <Switch
-                  checked={notifications.newPatientAlerts}
-                  onChange={(e) => setNotifications({ ...notifications, newPatientAlerts: e.target.checked })}
-                />
-              </ListItem>
-              <ListItem>
-                <ListItemText primary="Image Upload Alerts" />
-                <Switch
-                  checked={notifications.imageUploadAlerts}
-                  onChange={(e) => setNotifications({ ...notifications, imageUploadAlerts: e.target.checked })}
-                />
-              </ListItem>
-            </List>
-          </Paper>
-        </Grid>
-
-        {/* Security Settings */}
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, height: '100%' }}>
-            <Typography variant="h6" gutterBottom>
-              Security Settings
-            </Typography>
-            <List>
-              <ListItem>
-                <ListItemText 
-                  primary="Two-Factor Authentication"
-                  secondary="Require 2FA for account access"
-                />
-                <Switch
-                  checked={security.twoFactorAuth}
-                  onChange={(e) => setSecurity({ ...security, twoFactorAuth: e.target.checked })}
-                />
-              </ListItem>
-              <ListItem>
-                <ListItemText 
-                  primary="Patient Verification"
-                  secondary="Require verification for new patients"
-                />
-                <Switch
-                  checked={security.requirePatientVerification}
-                  onChange={(e) => setSecurity({ ...security, requirePatientVerification: e.target.checked })}
-                />
-              </ListItem>
-              <ListItem>
-                <FormControl fullWidth>
-                  <InputLabel>Auto Logout</InputLabel>
-                  <Select
-                    value={security.autoLogoutMinutes}
-                    label="Auto Logout"
-                    onChange={(e) => setSecurity({ ...security, autoLogoutMinutes: e.target.value as number })}
-                  >
-                    <MenuItem value={15}>15 minutes</MenuItem>
-                    <MenuItem value={30}>30 minutes</MenuItem>
-                    <MenuItem value={60}>1 hour</MenuItem>
-                  </Select>
-                </FormControl>
-              </ListItem>
-            </List>
-          </Paper>
-        </Grid>
-
-        {/* Image Sharing Settings */}
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Image Sharing Settings
-            </Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Default Link Expiry</InputLabel>
-                  <Select
-                    value={imageSharing.defaultLinkExpiry}
-                    label="Default Link Expiry"
-                    onChange={(e) => setImageSharing({ ...imageSharing, defaultLinkExpiry: e.target.value as number })}
-                  >
-                    <MenuItem value={1}>1 day</MenuItem>
-                    <MenuItem value={7}>7 days</MenuItem>
-                    <MenuItem value={30}>30 days</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Compression Quality</InputLabel>
-                  <Select
-                    value={imageSharing.compressionQuality}
-                    label="Compression Quality"
-                    onChange={(e) => setImageSharing({ ...imageSharing, compressionQuality: e.target.value as string })}
-                  >
-                    <MenuItem value="low">Low</MenuItem>
-                    <MenuItem value="medium">Medium</MenuItem>
-                    <MenuItem value="high">High</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={imageSharing.requirePatientConsent}
-                      onChange={(e) => setImageSharing({ ...imageSharing, requirePatientConsent: e.target.checked })}
-                    />
-                  }
-                  label="Require Patient Consent for Sharing"
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={imageSharing.watermarkImages}
-                      onChange={(e) => setImageSharing({ ...imageSharing, watermarkImages: e.target.checked })}
-                    />
-                  }
-                  label="Apply Watermark to Shared Images"
-                />
-              </Grid>
-            </Grid>
-          </Paper>
-        </Grid>
-
-        {/* Save Button */}
-        <Grid item xs={12}>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+      {loading ? (
+        <div className="flex justify-center items-center h-screen">
+          <CircularProgress />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-6 mb-6">
+            <PracticeInfoForm
+              practiceInfo={practiceInfo}
+              setPracticeInfo={setPracticeInfo}
+            />
+            <NotificationSettingsForm
+              notifications={notifications}
+              setNotifications={setNotifications}
+            />
+            <SecuritySettingsForm
+              security={security}
+              setSecurity={setSecurity}
+            />
+            <ImageSharingSettingsForm
+              imageSharing={imageSharing}
+              setImageSharing={setImageSharing}
+            />
+            <AvailabilitySettingsForm
+              availability={availability}
+              setAvailability={setAvailability}
+            />
+          </div>
+          <div className="flex justify-end gap-4">
             <Button
               variant="contained"
               color="primary"
-              startIcon={<SaveIcon />}
               onClick={handleSave}
+              disabled={saving}
             >
-              Save Settings
+              {saving ? 'Saving...' : 'Save Changes'}
             </Button>
-          </Box>
-        </Grid>
-      </Grid>
+          </div>
+        </>
+      )}
+      {error && (
+        <Snackbar
+          open={!!error}
+          autoHideDuration={6000}
+          onClose={() => setError(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        >
+          <Alert onClose={() => setError(null)} severity="error">
+            {error}
+          </Alert>
+        </Snackbar>
+      )}
+      {success && (
+        <Snackbar
+          open={!!success}
+          autoHideDuration={6000}
+          onClose={() => setSuccess(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        >
+          <Alert onClose={() => setSuccess(null)} severity="success">
+            {success}
+          </Alert>
+        </Snackbar>
+      )}
     </Container>
   );
 } 

@@ -9,164 +9,156 @@ import {
   Alert,
   Paper,
   CircularProgress,
+  Card,
+  CardContent,
+  CardHeader,
+  CardActions,
 } from '@mui/material';
 import { useRouter } from 'next/navigation';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
-import { LoadingState } from '@/components/LoadingState';
+import { useSignIn } from '@clerk/nextjs';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
 
 interface TwoFactorFormProps {
   email: string;
-  onVerify: (code: string) => Promise<void>;
-  onResend: () => Promise<void>;
+  onSuccess?: () => void;
 }
+
+// Create form schema
+const formSchema = z.object({
+  code: z.string().min(6, {
+    message: 'Verification code must be at least 6 characters long',
+  }),
+});
+
+type FormData = z.infer<typeof formSchema>;
 
 export const TwoFactorForm: React.FC<TwoFactorFormProps> = ({
   email,
-  onVerify,
-  onResend,
+  onSuccess,
 }) => {
-  const [code, setCode] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [resendDisabled, setResendDisabled] = useState(true);
-  const [countdown, setCountdown] = useState(30);
   const router = useRouter();
-  const { error, handleError, clearError, withErrorHandling } = useErrorHandler({
-    context: 'Two-Factor Authentication'
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const { signIn, isLoaded } = useSignIn();
+  
+  useEffect(() => {
+    // Start the MFA process when the component loads
+    if (isLoaded && signIn) {
+      const prepareSecondFactor = async () => {
+        try {
+          // Start the second factor verification process
+          await signIn.prepareSecondFactor({
+            strategy: 'email_code' as any,
+          });
+        } catch (error) {
+          console.error('Error preparing second factor:', error);
+          setErrorMessage('Unable to send verification code. Please try again.');
+        }
+      };
+      
+      prepareSecondFactor();
+    }
+  }, [isLoaded, signIn]);
+
+  // Initialize form
+  const form = useForm<FormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      code: '',
+    },
   });
 
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (countdown > 0) {
-      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-    } else {
-      setResendDisabled(false);
-    }
-    return () => clearTimeout(timer);
-  }, [countdown]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!code) {
-      handleError(new Error('Please enter the verification code'));
-      return;
-    }
-
-    await withErrorHandling(async () => {
-      setLoading(true);
-      try {
-        await onVerify(code);
+  // Handle form submission
+  const onSubmit = async (data: FormData) => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    
+    try {
+      if (!isLoaded || !signIn) {
+        throw new Error('Authentication system not loaded');
+      }
+      
+      // Use Clerk's built-in MFA functionality
+      const result = await signIn.attemptSecondFactor({
+        strategy: 'email_code' as any,
+        code: data.code
+      });
+      
+      if (result.status === 'complete') {
+        // Successfully verified, redirect to dashboard
         router.push('/dashboard');
-      } catch (err: any) {
-        // Re-throw with more specific error message
-        throw new Error(err.response?.data?.message || 'Invalid verification code');
-      } finally {
-        setLoading(false);
+      } else {
+        setErrorMessage('Invalid or expired verification code. Please try again.');
       }
-    });
-  };
-
-  const handleResend = async () => {
-    await withErrorHandling(async () => {
-      setLoading(true);
-      try {
-        await onResend();
-        setCountdown(30);
-        setResendDisabled(true);
-        setCode(''); // Clear code field on resend
-      } finally {
-        setLoading(false);
-      }
-    });
+    } catch (error) {
+      console.error('MFA verification error:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to verify. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
-    <Paper elevation={3} sx={{ p: 4, width: '100%', maxWidth: 400, mx: 'auto' }}>
-      <Box 
-        component="form" 
-        onSubmit={handleSubmit}
-        role="dialog"
-        aria-labelledby="two-factor-dialog-title"
-        aria-describedby="two-factor-dialog-description"
-      >
-        <Typography 
-          id="two-factor-dialog-title"
-          variant="h5" 
-          component="h1" 
-          gutterBottom 
-          textAlign="center"
-        >
-          Two-Factor Authentication
-        </Typography>
+    <Paper elevation={3} sx={{ p: 4, maxWidth: 400, mx: 'auto', mt: 4 }}>
+      <Typography variant="h5" component="h1" gutterBottom textAlign="center">
+        Two-Factor Authentication
+      </Typography>
+      <Typography variant="body1" gutterBottom textAlign="center" sx={{ mb: 3 }}>
+        Please enter the verification code sent to {email}
+      </Typography>
 
-        <Typography
-          id="two-factor-dialog-description"
-          variant="body2"
-          color="text.secondary"
-          paragraph
-          textAlign="center"
-        >
-          We've sent a verification code to {email}. Please enter it below to
-          continue.
-        </Typography>
-
-        {error && (
-          <Alert 
-            severity="error" 
-            sx={{ mb: 2 }}
-            action={
-              <Button 
-                color="inherit" 
-                size="small" 
-                onClick={clearError}
-              >
-                Dismiss
-              </Button>
-            }
-            role="alert"
-          >
-            {error}
-          </Alert>
-        )}
-
+      <Box component="form" onSubmit={form.handleSubmit(onSubmit)}>
         <TextField
           fullWidth
           label="Verification Code"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
+          {...form.register("code")}
           margin="normal"
-          autoComplete="one-time-code"
-          inputProps={{
+          required
+          disabled={isLoading}
+          error={!!form.formState.errors.code}
+          helperText={form.formState.errors.code?.message}
+          inputProps={{ 
             maxLength: 6,
-            inputMode: 'numeric',
             pattern: '[0-9]*',
-            'aria-label': 'Verification code input'
+            inputMode: 'numeric'
           }}
-          error={!!error}
-          disabled={loading}
         />
+
+        {errorMessage && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {errorMessage}
+          </Alert>
+        )}
 
         <Button
           type="submit"
           fullWidth
           variant="contained"
-          size="large"
           sx={{ mt: 3 }}
-          disabled={loading || !code}
+          disabled={isLoading}
         >
-          {loading ? <CircularProgress size={24} /> : 'Verify'}
+          {isLoading ? <CircularProgress size={24} /> : 'Verify'}
         </Button>
 
-        <Box sx={{ mt: 2, textAlign: 'center' }}>
-          <Button
-            onClick={handleResend}
-            disabled={resendDisabled || loading}
-            sx={{ textTransform: 'none' }}
-          >
-            {resendDisabled
-              ? `Resend code in ${countdown}s`
-              : 'Resend verification code'}
-          </Button>
-        </Box>
+        <Button
+          fullWidth
+          variant="text"
+          onClick={() => {
+            if (isLoaded && signIn) {
+              signIn.prepareSecondFactor({
+                strategy: 'email_code' as any,
+              });
+              setErrorMessage('A new verification code has been sent.');
+            }
+          }}
+          disabled={isLoading}
+          sx={{ mt: 2 }}
+        >
+          Resend verification code
+        </Button>
       </Box>
     </Paper>
   );

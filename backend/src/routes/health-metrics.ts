@@ -1,23 +1,31 @@
-import express, { RequestHandler } from 'express';
-import {
+import { Router } from 'express';
+import { protect } from '../middleware/clerk.js';
+import { 
   getHealthMetrics,
   getHealthMetric,
   createHealthMetric,
   updateHealthMetric,
   deleteHealthMetric
 } from '../controllers/health-metric.controller.js';
-import { protect } from '../middleware/auth.js';
+import type { RequestHandler } from 'express';
 
-const router = express.Router();
+const router = Router();
 
-// Apply authentication middleware to all routes
+// Apply protection middleware to all routes
 router.use(protect as RequestHandler);
 
-// Patient health metrics routes
-router.get('/api/v1/patient/:patientId/health-metrics', getHealthMetrics as RequestHandler);
-router.get('/api/v1/patient/:patientId/health-metrics/:metricId', getHealthMetric as RequestHandler);
-router.post('/api/v1/patient/health-metrics', createHealthMetric as RequestHandler);
-router.put('/api/v1/patient/:patientId/health-metrics/:metricId', updateHealthMetric as RequestHandler);
-router.delete('/api/v1/patient/:patientId/health-metrics/:metricId', deleteHealthMetric as RequestHandler);
+// Health metrics routes
+router.route('/')
+  .get(getHealthMetrics as RequestHandler)
+  .post(createHealthMetric as RequestHandler);
+
+router.route('/:id')
+  .get(getHealthMetric as RequestHandler)
+  .put(updateHealthMetric as RequestHandler)
+  .delete(deleteHealthMetric as RequestHandler);
+
+// Analytics routes
+router.route('/analytics')
+  .get((req, res, next) => res.status(501).json({ message: 'Not implemented' }));
 
 export default router;  

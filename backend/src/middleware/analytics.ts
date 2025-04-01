@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AnalyticsService } from '../services/analytics.service.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 
 // Extend the Express Request type to include analyticsService
 declare global {
@@ -13,6 +13,6 @@ declare global {
 
 export const injectAnalyticsService = (req: Request, res: Response, next: NextFunction) => {
   // Create a new instance of AnalyticsService for each request
-  req.analyticsService = new AnalyticsService(prisma);
+  req.analyticsService = new AnalyticsService(prisma as any);
   next();
 }; 

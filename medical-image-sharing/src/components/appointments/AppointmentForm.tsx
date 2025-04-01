@@ -11,27 +11,43 @@ import {
   Grid,
   InputLabel,
   MenuItem,
-  Select,
+  Select as MuiSelect,
   TextField,
   Typography,
   Alert,
   Snackbar, 
   CircularProgress,
   SelectChangeEvent,
+  Paper,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { TimePicker } from '@mui/x-date-pickers/TimePicker';
-import { ApiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { patientClient, providerClient, adminClient } from '@/lib/api';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { format } from 'date-fns';
 import { AppointmentStatus } from '@prisma/client';
+import { toast } from 'react-hot-toast';
+import { ApiResponse, PaginatedResponse, User, Appointment, CreateAppointmentRequest, UpdateAppointmentRequest } from '@/lib/api/types';
+import { useProviders } from '@/hooks/useProviders';
+import { usePatients } from '@/hooks/usePatients';
+import { useRouter } from 'next/navigation';
+
+interface SessionUser {
+  id: string;
+  email: string;
+  role: string;
+}
 
 interface Provider {
   id: string;
   name: string;
-  specialty: string;
+  specialty?: string;
 }
 
 interface Patient {
@@ -39,18 +55,18 @@ interface Patient {
   name: string;
 }
 
-export interface AppointmentFormProps {
+interface AppointmentFormProps {
   onSuccess?: (appointmentId: string) => void;
   editMode?: boolean;
   initialData?: {
     id?: string;
     providerId?: string;
     patientId?: string;
-    scheduledFor?: Date | string;
     reason?: string;
     notes?: string;
     type?: string;
     status?: string;
+    scheduledFor?: string;
   };
   patientId?: string;
   providerId?: string;
@@ -74,7 +90,9 @@ export default function AppointmentForm({
   patientId,
   providerId,
 }: AppointmentFormProps) {
-  const { user } = useAuth();
+  const router = useRouter();
+  const { user } = useUser();
+  const userRole = user?.publicMetadata?.role as string || 'PATIENT';
   
   // Form data state
   const [formData, setFormData] = useState<FormData>({
@@ -94,69 +112,32 @@ export default function AppointmentForm({
   const [error, setError] = useState('');
   const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({});
   
-  // Providers and patients list
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [patients, setPatients] = useState<Patient[]>([]);
+  // Provider and patient options for select inputs
+  const [providersOptions, setProvidersOptions] = useState<Provider[]>([]);
+  const [patientsOptions, setPatientsOptions] = useState<Patient[]>([]);
+  
+  // Hooks for fetching providers and patients
+  const { providers, loading: loadingProviders } = useProviders();
+  const { patients, loading: loadingPatients } = usePatients();
+  
+  // Remove these states since we get them from the hooks
   const [fetchingProviders, setFetchingProviders] = useState(false);
   const [fetchingPatients, setFetchingPatients] = useState(false);
   
-  // Fetch providers on mount
-  useEffect(() => {
-    const fetchProviders = async () => {
-      if (user?.role === 'PATIENT' || (user?.role === 'ADMIN' && !providerId)) {
-        try {
-          setFetchingProviders(true);
-          const apiClient = ApiClient.getInstance();
-          const response = await apiClient.getProviders();
-          
-          if (response.data?.data) {
-            const mappedProviders = response.data.data.map((provider: any) => ({
-              id: provider.id,
-              name: provider.name || `${provider.firstName || ''} ${provider.lastName || ''}`.trim(),
-              specialty: provider.specialty || 'General',
-            }));
-            setProviders(mappedProviders);
-          }
-        } catch (error) {
-          console.error('Error fetching providers:', error);
-          setError('Failed to load providers. Please try again.');
-        } finally {
-          setFetchingProviders(false);
-        }
-      }
-    };
-    
-    fetchProviders();
-  }, [user?.role, providerId]);
+  // Remove the providers and patients fetch useEffects since we're using hooks now
   
-  // Fetch patients if needed (for provider or admin)
+  // Replace the existing setProviders and setPatients arrays with the ones from hooks
   useEffect(() => {
-    const fetchPatients = async () => {
-      if ((user?.role === 'PROVIDER' || user?.role === 'ADMIN') && !patientId) {
-        try {
-          setFetchingPatients(true);
-          const apiClient = ApiClient.getInstance();
-          const response = await apiClient.getUsers({ role: 'PATIENT' });
-          
-          if (response.data) {
-            const responseData = response.data.data || [];
-            const mappedPatients = responseData.map((patient: any) => ({
-              id: patient.id,
-              name: patient.name || `${patient.firstName || ''} ${patient.lastName || ''}`.trim(),
-            }));
-            setPatients(mappedPatients);
-          }
-        } catch (error) {
-          console.error('Error fetching patients:', error);
-          setError('Failed to load patients. Please try again.');
-        } finally {
-          setFetchingPatients(false);
-        }
-      }
-    };
-    
-    fetchPatients();
-  }, [user?.role, patientId]);
+    if (providers.length > 0 && !loadingProviders) {
+      setProvidersOptions(providers);
+    }
+  }, [providers, loadingProviders]);
+  
+  useEffect(() => {
+    if (patients.length > 0 && !loadingPatients) {
+      setPatientsOptions(patients);
+    }
+  }, [patients, loadingPatients]);
   
   // Form validation
   const validateForm = () => {
@@ -202,8 +183,6 @@ export default function AppointmentForm({
       setLoading(true);
       setError('');
       
-      const apiClient = ApiClient.getInstance();
-      
       // Combine date and time for scheduledFor
       const dateObj = formData.date || new Date();
       const timeObj = formData.time || new Date();
@@ -219,43 +198,68 @@ export default function AppointmentForm({
       const formattedDate = format(scheduledFor, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
       
       const appointmentData = {
-        providerId: formData.providerId,
         patientId: formData.patientId,
         scheduledFor: formattedDate,
         reason: formData.reason,
         notes: formData.notes,
         type: formData.type,
-        status: formData.status,
       };
       
-      let response;
+      let response: ApiResponse<Appointment>;
       
       if (editMode && initialData?.id) {
-        response = await apiClient.updateAppointment(initialData.id, appointmentData);
+        // Update existing appointment
+        const updateData: UpdateAppointmentRequest = {
+          scheduledFor: formattedDate,
+          reason: formData.reason,
+          notes: formData.notes,
+          type: formData.type,
+          status: formData.status,
+        };
+        response = await providerClient.updateAppointment(initialData.id, updateData);
       } else {
-        response = await apiClient.createAppointment(appointmentData);
+        // Create new appointment
+        if (userRole === 'PATIENT') {
+          response = await patientClient.createAppointment({
+            providerId: formData.providerId,
+            datetime: formattedDate,
+            notes: formData.notes,
+            type: formData.type
+          });
+        } else if (userRole === 'PROVIDER') {
+          response = await providerClient.createAppointment({
+            patientId: formData.patientId,
+            scheduledFor: formattedDate,
+            reason: formData.reason,
+            notes: formData.notes,
+            type: formData.type
+          });
+        } else {
+          // Admin uses provider client since adminClient doesn't have createAppointment
+          response = await providerClient.createAppointment({
+            patientId: formData.patientId,
+            scheduledFor: formattedDate,
+            reason: formData.reason,
+            notes: formData.notes,
+            type: formData.type
+          });
+        }
       }
       
-      if (response.data) {
-        setSuccess(true);
-        setFormData({
-          providerId: providerId || '',
-          patientId: patientId || '',
-          date: new Date(),
-          time: new Date(),
-          reason: '',
-          notes: '',
-          type: 'checkup',
-          status: AppointmentStatus.SCHEDULED,
-        });
-        
-        if (onSuccess) {
-          onSuccess(response.data.id);
-        }
+      if (response.status === 'success') {
+        toast.success(editMode ? 'Appointment updated successfully' : 'Appointment created successfully');
+        onSuccess?.(response.data.id);
+      } else {
+        throw new Error(response.error?.message || 'Failed to save appointment');
       }
     } catch (error) {
       console.error('Error saving appointment:', error);
-      setError('Failed to save appointment. Please try again.');
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'Failed to save appointment. Please try again.';
+      
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -336,11 +340,11 @@ export default function AppointmentForm({
           <Box component="form" onSubmit={handleSubmit} noValidate>
             <Grid container spacing={2}>
               {/* Provider Selection */}
-              {(user?.role === 'PATIENT' || (user?.role === 'ADMIN' && !providerId)) && (
+              {(userRole === 'PATIENT' || (userRole === 'ADMIN' && !providerId)) && (
                 <Grid item xs={12} md={6}>
                   <FormControl fullWidth error={!!validationErrors.providerId}>
                     <InputLabel id="provider-label">Provider</InputLabel>
-                    <Select
+                    <MuiSelect
                       labelId="provider-label"
                       id="providerId"
                       name="providerId"
@@ -349,7 +353,7 @@ export default function AppointmentForm({
                       onChange={handleChange}
                       disabled={loading || !!providerId}
                     >
-                      {fetchingProviders ? (
+                      {loadingProviders ? (
                         <MenuItem value="">
                           <CircularProgress size={20} /> Loading...
                         </MenuItem>
@@ -360,7 +364,7 @@ export default function AppointmentForm({
                           </MenuItem>
                         ))
                       )}
-                    </Select>
+                    </MuiSelect>
                     {validationErrors.providerId && (
                       <FormHelperText>{validationErrors.providerId}</FormHelperText>
                     )}
@@ -369,11 +373,11 @@ export default function AppointmentForm({
               )}
               
               {/* Patient Selection */}
-              {(user?.role === 'PROVIDER' || (user?.role === 'ADMIN' && !patientId)) && (
+              {(userRole === 'PROVIDER' || (userRole === 'ADMIN' && !patientId)) && (
                 <Grid item xs={12} md={6}>
                   <FormControl fullWidth error={!!validationErrors.patientId}>
                     <InputLabel id="patient-label">Patient</InputLabel>
-                    <Select
+                    <MuiSelect
                       labelId="patient-label"
                       id="patientId"
                       name="patientId"
@@ -382,7 +386,7 @@ export default function AppointmentForm({
                       onChange={handleChange}
                       disabled={loading || !!patientId}
                     >
-                      {fetchingPatients ? (
+                      {loadingPatients ? (
                         <MenuItem value="">
                           <CircularProgress size={20} /> Loading...
                         </MenuItem>
@@ -393,7 +397,7 @@ export default function AppointmentForm({
                           </MenuItem>
                         ))
                       )}
-                    </Select>
+                    </MuiSelect>
                     {validationErrors.patientId && (
                       <FormHelperText>{validationErrors.patientId}</FormHelperText>
                     )}
@@ -405,7 +409,7 @@ export default function AppointmentForm({
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth error={!!validationErrors.type}>
                   <InputLabel id="type-label">Appointment Type</InputLabel>
-                  <Select
+                  <MuiSelect
                     labelId="type-label"
                     id="type"
                     name="type"
@@ -419,7 +423,7 @@ export default function AppointmentForm({
                     <MenuItem value="followup">Follow-up</MenuItem>
                     <MenuItem value="imaging">Imaging</MenuItem>
                     <MenuItem value="procedure">Procedure</MenuItem>
-                  </Select>
+                  </MuiSelect>
                   {validationErrors.type && (
                     <FormHelperText>{validationErrors.type}</FormHelperText>
                   )}
@@ -431,7 +435,7 @@ export default function AppointmentForm({
                 <Grid item xs={12} md={6}>
                   <FormControl fullWidth error={!!validationErrors.status}>
                     <InputLabel id="status-label">Status</InputLabel>
-                    <Select
+                    <MuiSelect
                       labelId="status-label"
                       id="status"
                       name="status"
@@ -444,7 +448,7 @@ export default function AppointmentForm({
                       <MenuItem value={AppointmentStatus.COMPLETED}>Completed</MenuItem>
                       <MenuItem value={AppointmentStatus.CANCELLED}>Cancelled</MenuItem>
                       <MenuItem value={AppointmentStatus.NO_SHOW}>No Show</MenuItem>
-                    </Select>
+                    </MuiSelect>
                     {validationErrors.status && (
                       <FormHelperText>{validationErrors.status}</FormHelperText>
                     )}
@@ -458,15 +462,14 @@ export default function AppointmentForm({
                   label="Appointment Date"
                   value={formData.date}
                   onChange={(date: unknown) => handleDateChange(date)}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      fullWidth
-                      error={!!validationErrors.date}
-                      helperText={validationErrors.date}
-                      disabled={loading}
-                    />
-                  )}
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      error: !!validationErrors.date,
+                      helperText: validationErrors.date,
+                      disabled: loading
+                    }
+                  }}
                 />
               </Grid>
               
@@ -476,15 +479,14 @@ export default function AppointmentForm({
                   label="Appointment Time"
                   value={formData.time}
                   onChange={(time: unknown) => handleTimeChange(time)}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      fullWidth
-                      error={!!validationErrors.time}
-                      helperText={validationErrors.time}
-                      disabled={loading}
-                    />
-                  )}
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      error: !!validationErrors.time,
+                      helperText: validationErrors.time,
+                      disabled: loading
+                    }
+                  }}
                 />
               </Grid>
               

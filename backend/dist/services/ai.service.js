@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { AppError } from '../utils/appError.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
@@ -19,7 +19,9 @@ export class AIService {
             }
             // Get previous messages for context
             const previousMessages = await prisma.chatMessage.findMany({
-                where: { chatSessionId: session.id },
+                where: {
+                    sessionId: session.id
+                },
                 orderBy: { createdAt: 'desc' },
                 take: 5
             });
@@ -31,17 +33,19 @@ export class AIService {
             // Save the user's message
             await prisma.chatMessage.create({
                 data: {
-                    chatSessionId: session.id,
+                    sessionId: session.id,
                     content: message,
-                    role: 'USER'
+                    type: 'USER',
+                    status: 'SENT'
                 }
             });
             // Save the AI's response
             await prisma.chatMessage.create({
                 data: {
-                    chatSessionId: session.id,
+                    sessionId: session.id,
                     content: response.message,
-                    role: 'ASSISTANT'
+                    type: 'BOT',
+                    status: 'SENT'
                 }
             });
             return response;
@@ -60,11 +64,15 @@ export class AIService {
                 return existingSession;
             }
         }
-        // Create new session
+        // Create new session - with valid fields based on schema
         return await prisma.chatSession.create({
             data: {
                 userId,
-                title: `Chat Session ${new Date().toLocaleString()}`
+                isActive: true,
+                metadata: {
+                    createdAt: new Date().toISOString(),
+                    startedBy: 'user'
+                }
             }
         });
     }

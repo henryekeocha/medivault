@@ -14,6 +14,7 @@ import { Chatbot } from '@/components/chatbot/Chatbot';
 import { withProtectedRoute } from '@/components/ProtectedRoute';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState'; 
+import { patientClient } from '@/lib/api/patientClient';
 
 function PatientChatbotPage() {
   const { error, loading, setLoading, handleError, clearError, retry } = useErrorHandler({
@@ -28,7 +29,7 @@ function PatientChatbotPage() {
     const loadChatbot = async () => {
       try {
         setLoading(true);
-        // Simulate API call to check if chatbot is available
+        // In the future, we can add a real check using patientClient here
         await new Promise(resolve => setTimeout(resolve, 1000));
         setIsReady(true);
       } catch (err) {

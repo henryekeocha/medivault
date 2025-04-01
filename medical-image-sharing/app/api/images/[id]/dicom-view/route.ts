@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
+import { auth } from '@clerk/nextjs/server';
 import prisma from '@/lib/db';
 import { ImageType } from '@/lib/api/types';
-import { authOptions } from '../../../auth/[...nextauth]/route';
 import { logAudit } from '@/lib/audit-logger';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -30,16 +29,29 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    // Get authenticated user session
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    // Get authenticated user from Clerk
+    const { userId: clerkUserId } = await auth();
+    if (!clerkUserId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'Authentication required' },
         { status: 401 }
       );
     }
 
-    const userId = session.user.id;
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: clerkUserId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'NotFound', message: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    const userId = user.id;
     const imageId = params.id;
 
     // Fetch the image with permission checks

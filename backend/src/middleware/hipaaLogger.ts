@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { AuthenticatedRequest } from '../types/auth.js';
 
 type ResponseWriteCallback = (error: Error | null | undefined) => void;
@@ -31,7 +31,7 @@ export const hipaaLogger = (
       data: {
         userId: req.user?.id,
         action: `${req.method}_${req.originalUrl}`,
-        details: {
+        details: JSON.stringify({
           type: 'API_REQUEST',
           method: req.method,
           url: req.originalUrl,
@@ -39,7 +39,7 @@ export const hipaaLogger = (
           responseBody: responseBody,
           headers: req.headers,
           ip: req.ip
-        }
+        })
       }
     }).catch(err => console.error('Error creating audit log:', err));
 

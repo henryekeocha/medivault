@@ -29,13 +29,13 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { ImageType } from '@prisma/client';
-import { apiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
 import { ImageViewer } from './ImageViewer';
 import { ShareDialog } from '../shares/ShareDialog';
 import type { Image } from '@/lib/api/types';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
+import { imageService } from '@/lib/api/services/image.service';
 
 interface ImageListProps {
   patientId?: string;
@@ -48,7 +48,7 @@ export const ImageList: React.FC<ImageListProps> = ({
   onImageSelect,
   readOnly = false,
 }) => {
-  const { user } = useAuth();
+  const { data: session } = useSession();
   const [images, setImages] = useState<Image[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -75,30 +75,41 @@ export const ImageList: React.FC<ImageListProps> = ({
     showToastByDefault: true 
   });
 
+  useEffect(() => {
+    // Set the user role in the image service
+    imageService.setUserRole(session?.user?.role === 'PROVIDER' ? 'PROVIDER' : 'PATIENT');
+  }, [session?.user?.role]);
+
   const fetchImages = async () => {
     clearError();
     setLoading(true);
     
     try {
-      const response = await apiClient.getImages({
+      const response = await imageService.getImages({
         page,
         limit: 12,
-        patientId,
-        type: filters.type || undefined,
-        search: filters.search || undefined,
-        startDate: filters.startDate || undefined,
-        endDate: filters.endDate || undefined,
+        ...(patientId && { patientId })
       });
 
       if (response.status !== 'success') {
         throw new Error(response.error?.message || 'Failed to fetch images');
       }
 
-      const items = response.data.data;
-      const total = response.data.pagination?.total || 0;
-      
-      setImages(items);
-      setTotalPages(Math.ceil(total / 12));
+      const data = response.data;
+      if ('data' in data) {  // Check if it's a PaginatedResponse
+        const filteredImages = data.data.filter(image => {
+          if (filters.type && image.type !== filters.type) return false;
+          if (filters.search && !image.filename.toLowerCase().includes(filters.search.toLowerCase())) return false;
+          if (filters.startDate && new Date(image.createdAt) < new Date(filters.startDate)) return false;
+          if (filters.endDate && new Date(image.createdAt) > new Date(filters.endDate)) return false;
+          return true;
+        });
+        setImages(filteredImages);
+        setTotalPages(Math.ceil(filteredImages.length / 12));
+      } else {  // It's an Image[]
+        setImages(data);
+        setTotalPages(1);
+      }
     } catch (error) {
       handleError(error as Error);
       setImages([]);
@@ -140,7 +151,7 @@ export const ImageList: React.FC<ImageListProps> = ({
     if (!activeImageId) return;
 
     withErrorHandling(async () => {
-      const response = await apiClient.deleteImage(activeImageId);
+      const response = await imageService.deleteImage(activeImageId);
       
       if (response.status !== 'success') {
         throw new Error(response.error?.message || 'Failed to delete image');

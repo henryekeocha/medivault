@@ -25,7 +25,7 @@ import {
 } from '@mui/material';
 import { Person, CalendarMonth, Search } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import { ApiClient } from '@/lib/api/client';
+import { providerClient } from '@/lib/api/providerClient';
 import { ProviderSpecialty, Role } from '@prisma/client';
 
 // Define interfaces
@@ -34,7 +34,7 @@ interface Provider {
   name: string;
   email: string;
   role: Role;
-  specialty?: ProviderSpecialty;
+  specialty?: string;
   bio?: string;
   rating?: number;
   imageUrl?: string;
@@ -72,7 +72,6 @@ export default function ProviderDirectory() {
     try {
       setState(prev => ({ ...prev, loading: true, error: null }));
       
-      const apiClient = ApiClient.getInstance();
       const params = {
         page: state.page,
         limit: 10,
@@ -81,7 +80,7 @@ export default function ProviderDirectory() {
         role: Role.PROVIDER
       };
       
-      const response = await apiClient.getProviders(params);
+      const response = await providerClient.getProviders(params);
       
       if (response.status === 'success' && response.data) {
         setState(prev => ({ 

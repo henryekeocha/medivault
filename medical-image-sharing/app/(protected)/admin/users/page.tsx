@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import {
   Box,
   Typography,
@@ -49,7 +49,7 @@ import {
   FilterList as FilterIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
 import { Role } from '@prisma/client';
@@ -101,8 +101,8 @@ function mapApiUserToComponentUser(apiUser: any): User {
 }
 
 export default function UserManagementPage() {
+  const { user, isLoaded } = useUser();
   const router = useRouter();
-  const { user, isAuthenticated } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -141,8 +141,7 @@ export default function UserManagementPage() {
     setLoading(true);
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getAdminUsers({
+      const response = await adminClient.getUsers({
         page,
         limit,
         role: roleFilter || undefined,
@@ -168,18 +167,22 @@ export default function UserManagementPage() {
   };
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push(routes.root.login as Route);
+    if (!isLoaded) return;
+
+    if (!user) {
+      router.push('/auth/login');
       return;
     }
 
-    if (user?.role !== Role.ADMIN) {
+    // Check if user has admin role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'ADMIN') {
       router.push('/dashboard');
       return;
     }
     
     fetchUsers();
-  }, [isAuthenticated, user?.role, router, page, limit, roleFilter, statusFilter, sortBy, sortDirection]);
+  }, [isLoaded, user, router]);
 
   // Debounce search term changes
   useEffect(() => {
@@ -294,39 +297,30 @@ export default function UserManagementPage() {
   const handleSubmitUser = async () => {
     if (!validateForm()) return;
     
-    clearError();
     setSaveLoading(true);
+    clearError();
     
     try {
-      const apiClient = ApiClient.getInstance();
+      const userData = {
+        name: formData.name,
+        email: formData.email,
+        role: formData.role as Role,
+        ...(formData.password ? { password: formData.password } : {}),
+      };
+
       let response;
-      
       if (formData.id) {
-        // Update existing user
-        const { id, password, confirmPassword, ...updateData } = formData;
-        // Cast role to Role type
-        const typedUpdateData = {
-          ...updateData,
-          role: updateData.role as Role
-        };
-        response = await apiClient.updateAdminUser(id!, typedUpdateData);
+        response = await adminClient.updateUser(formData.id, userData);
       } else {
-        // Create new user
-        const { confirmPassword, ...createData } = formData;
-        // Cast role to Role type
-        const typedCreateData = {
-          ...createData,
-          role: createData.role as Role
-        };
-        response = await apiClient.createUser(typedCreateData);
+        response = await adminClient.createUser(userData);
       }
-      
+
       if (response.status === 'success') {
         setSuccess(formData.id ? 'User updated successfully' : 'User created successfully');
         handleDialogClose();
         fetchUsers();
       } else {
-        handleError(new Error(response.error?.message || 'Operation failed'));
+        handleError(new Error(response.error?.message || 'Failed to save user'));
       }
     } catch (err) {
       console.error('Error saving user:', err);
@@ -339,16 +333,11 @@ export default function UserManagementPage() {
   const handleConfirmDeactivate = async () => {
     if (!selectedUser) return;
     
-    if (!deactivateReason) {
-      setFormErrors({ deactivateReason: 'Please provide a reason for deactivation' });
-      return;
-    }
-    
     setSaveLoading(true);
+    clearError();
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.deactivateUser(selectedUser.id, deactivateReason);
+      const response = await adminClient.deactivateUser(selectedUser.id, deactivateReason);
       
       if (response.status === 'success') {
         setSuccess('User deactivated successfully');

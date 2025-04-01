@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/auth-options';
+import { auth } from '@clerk/nextjs/server';
 
 // Handler for marking a notification as read
 export async function PATCH(
@@ -11,19 +9,12 @@ export async function PATCH(
   try {
     const notificationId = params.id;
     
-    // Get token from request cookies or authorization header
-    const cookieStore = await cookies();
-    const tokenCookie = cookieStore.get('token');
-    let token = tokenCookie?.value;
+    // Get auth from Clerk
+    const session = await auth();
     
-    // Check for Authorization header if token not in cookies
-    if (!token) {
-      const authHeader = req.headers.get('Authorization');
-      if (authHeader?.startsWith('Bearer ')) {
-        token = authHeader.split(' ')[1];
-      }
-    }
-
+    // Get token from Clerk
+    const token = await session.getToken();
+    
     if (!token) {
       return NextResponse.json(
         { error: 'Authentication required' },
@@ -66,11 +57,11 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    // Get session from NextAuth
-    const session = await getServerSession(authOptions);
+    // Get auth from Clerk
+    const session = await auth();
     
-    // Get token from session
-    const token = session?.accessToken;
+    // Get token from Clerk
+    const token = await session.getToken();
     
     // If no token, return unauthorized
     if (!token) {

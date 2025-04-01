@@ -26,13 +26,13 @@ import {
   Snackbar,
 } from '@mui/material';
 import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { LoadingState } from '@/components/LoadingState';
 import { Role } from '@prisma/client';
-
+import { ClerkAuthService } from '@/lib/clerk/auth-service';
 
 // Interface for system settings
 interface SystemSettings {
@@ -90,8 +90,8 @@ interface SystemSettings {
 }
 
 export default function AdminSettingsPage() {
+  const { user, isLoaded } = useUser();
   const router = useRouter();
-  const { state } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
@@ -99,10 +99,15 @@ export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [originalSettings, setOriginalSettings] = useState<SystemSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [mfaSetup, setMfaSetup] = useState({
+    qrCode: '',
+    backupCodes: [] as string[],
+    isSetupComplete: false,
+  });
+  const [error, setError] = useState<string | null>(null);
 
   // Initialize error handler
   const { 
-    error, 
     handleError, 
     clearError,
     withErrorHandling 
@@ -111,19 +116,105 @@ export default function AdminSettingsPage() {
     showToastByDefault: true 
   });
 
+  // Handle MFA setup
+  const handleMfaSetup = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.setupMFA('authenticator');
+      
+      if (result.success && result.qrCode && result.backupCodes) {
+        setMfaSetup({
+          qrCode: result.qrCode,
+          backupCodes: result.backupCodes,
+          isSetupComplete: false,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to setup MFA');
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to setup MFA');
+    }
+  };
+
+  // Handle MFA verification
+  const handleMfaVerification = async (code: string) => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.verifyMFA(code);
+      
+      if (result.success) {
+        setSettings(prev => ({
+          ...prev!,
+          security: {
+            ...prev!.security,
+            requireTwoFactor: true,
+          },
+        }));
+        setMfaSetup(prev => ({ ...prev, isSetupComplete: true }));
+      } else {
+        throw new Error('Invalid verification code');
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to verify MFA code');
+    }
+  };
+
+  // Handle MFA disable
+  const handleMfaDisable = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await ClerkAuthService.disableMFA('authenticator');
+      
+      if (result.success) {
+        setSettings(prev => ({
+          ...prev!,
+          security: {
+            ...prev!.security,
+            requireTwoFactor: false,
+          },
+        }));
+        setMfaSetup({
+          qrCode: '',
+          backupCodes: [],
+          isSetupComplete: false,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to disable MFA');
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to disable MFA');
+    }
+  };
+
   // Fetch system settings
   const fetchSettings = async () => {
     clearError();
     setLoading(true);
     
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getSystemSettings();
+      const response = await adminClient.getSystemSettings();
       
       if (response.status === 'success' && response.data) {
         setSettings(response.data);
         setOriginalSettings(JSON.parse(JSON.stringify(response.data))); // Deep copy for comparison
         setHasChanges(false);
+
+        // Check MFA status
+        if (user) {
+          const mfaStatus = await ClerkAuthService.getMFAStatus();
+          if (settings) {
+            setSettings({
+              ...settings,
+              security: {
+                ...settings.security,
+                requireTwoFactor: mfaStatus.enabled || false,
+              },
+            });
+          }
+        }
       } else {
         throw new Error(response.error?.message || 'Failed to fetch system settings');
       }
@@ -200,18 +291,22 @@ export default function AdminSettingsPage() {
 
   // Check if user is authorized and fetch settings
   useEffect(() => {
-    if (!state.isAuthenticated) {
+    if (!isLoaded) return;
+
+    if (!user) {
       router.push('/auth/login');
       return;
     }
 
-    if (state.user?.role !== Role.ADMIN) {
+    // Check if user has admin role in metadata
+    const userRole = user.publicMetadata.role;
+    if (userRole !== 'ADMIN') {
       router.push('/dashboard');
       return;
     }
     
     fetchSettings();
-  }, [state.isAuthenticated, state.user?.role, router]);
+  }, [isLoaded, user, router]);
 
   // Check for changes when settings are updated
   useEffect(() => {
@@ -242,26 +337,23 @@ export default function AdminSettingsPage() {
 
   // Save settings
   const handleSave = async () => {
+    if (!settings) return;
+    
     clearError();
     setSaving(true);
     
-    // Use the withErrorHandling wrapper
     try {
-      await withErrorHandling(async () => {
-        // Perform API request to update settings
-        const apiClient = ApiClient.getInstance();
-        const response = await apiClient.updateSystemSettings(settings);
-        
-        if (response.status === 'success') {
-          // If successful, update the original settings to match current
-          setOriginalSettings(JSON.parse(JSON.stringify(settings)));
-          setHasChanges(false);
-        } else {
-          throw new Error(response.error?.message || 'Failed to save system settings');
-        }
-      }, {
-        successMessage: 'Settings saved successfully',
-      });
+      const response = await adminClient.updateSystemSettings(settings);
+      
+      if (response.status === 'success') {
+        setSuccess('Settings saved successfully');
+        setOriginalSettings(JSON.parse(JSON.stringify(settings))); // Update original settings
+        setHasChanges(false);
+      } else {
+        throw new Error(response.error?.message || 'Failed to save settings');
+      }
+    } catch (err) {
+      handleError(err as Error);
     } finally {
       setSaving(false);
     }
@@ -341,7 +433,7 @@ export default function AdminSettingsPage() {
             sx={{ mb: 3 }} 
             onClose={clearError}
             action={
-              error.toString().includes('fetch') && (
+              error.includes('fetch') && (
                 <Button
                   color="inherit"
                   size="small"
@@ -352,7 +444,7 @@ export default function AdminSettingsPage() {
               )
             }
           >
-            {error.toString()}
+            {error}
           </Alert>
         )}
         
@@ -462,18 +554,24 @@ export default function AdminSettingsPage() {
                 Security Configuration
               </Typography>
               <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
+                <Grid item xs={12}>
                   <FormControlLabel
                     control={
                       <Switch
                         checked={settings.security.requireTwoFactor}
-                        onChange={(e) => handleSettingChange('security', 'requireTwoFactor', e.target.checked)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            handleMfaSetup();
+                          } else {
+                            handleMfaDisable();
+                          }
+                        }}
                       />
                     }
-                    label="Require Two-Factor Authentication"
+                    label="Enable Two-Factor Authentication"
                   />
                 </Grid>
-                <Grid item xs={12} md={6}>
+                <Grid item xs={12}>
                   <FormControlLabel
                     control={
                       <Switch
@@ -484,7 +582,7 @@ export default function AdminSettingsPage() {
                     label="Enforce Strong Passwords"
                   />
                 </Grid>
-                <Grid item xs={12} md={6}>
+                <Grid item xs={12}>
                   <FormControl fullWidth>
                     <InputLabel>Password Expiry</InputLabel>
                     <Select
@@ -499,7 +597,7 @@ export default function AdminSettingsPage() {
                     </Select>
                   </FormControl>
                 </Grid>
-                <Grid item xs={12} md={6}>
+                <Grid item xs={12}>
                   <FormControl fullWidth>
                     <InputLabel>Session Timeout</InputLabel>
                     <Select
@@ -514,7 +612,7 @@ export default function AdminSettingsPage() {
                     </Select>
                   </FormControl>
                 </Grid>
-                <Grid item xs={12} md={6}>
+                <Grid item xs={12}>
                   <TextField
                     label="Max Login Attempts"
                     type="number"

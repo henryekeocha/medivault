@@ -12,10 +12,12 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
+import { useAuth } from '@/lib/clerk/use-auth';
 
 export default function AuthError() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { isSignedIn } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [errorType, setErrorType] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,7 +29,8 @@ export default function AuthError() {
 
     console.log('Auth error page loaded with params:', {
       error: errorParam,
-      callbackUrl: searchParams?.get('callbackUrl')
+      callbackUrl: searchParams?.get('callbackUrl'),
+      isSignedIn
     });
 
     if (errorParam) {
@@ -64,13 +67,18 @@ export default function AuthError() {
           setError('An unexpected authentication error occurred. Please try again.');
           break;
       }
+    } else if (isSignedIn) {
+      // If user is signed in but no error parameter, redirect to dashboard
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 3000);
     } else {
-      // If no error parameter, redirect to login
+      // If not signed in and no error parameter, redirect to login
       setTimeout(() => {
         router.push('/auth/login');
       }, 3000);
     }
-  }, [searchParams, router]);
+  }, [searchParams, router, isSignedIn]);
 
   if (loading) {
     return (
@@ -107,7 +115,7 @@ export default function AuthError() {
           </Alert>
         ) : (
           <Alert severity="info" sx={{ width: '100%', mb: 3 }}>
-            Redirecting to login page...
+            {isSignedIn ? 'Redirecting to dashboard...' : 'Redirecting to login page...'}
           </Alert>
         )}
 

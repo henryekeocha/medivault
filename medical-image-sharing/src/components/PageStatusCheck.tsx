@@ -1,75 +1,46 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
-import { useSession } from 'next-auth/react';
-import { useAuth } from '@/contexts/AuthContext';
+import React, { useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@clerk/nextjs';
 import LoadingScreen from '@/components/common/LoadingScreen';
+import { routes } from '@/config/routes';
 
-export default function PageStatusCheck({ children }: { children: React.ReactNode }) {
-  const [isRouterReady, setIsRouterReady] = useState(false);
-  const [isAuthChecking, setIsAuthChecking] = useState(false);
+interface PageStatusCheckProps {
+  children: React.ReactNode;
+}
+
+const PageStatusCheck: React.FC<PageStatusCheckProps> = ({ children }) => {
+  const { isLoaded, isSignedIn } = useAuth();
+  const router = useRouter();
   const pathname = usePathname();
-  const { loading: authLoading, checkAuth, isAuthenticated } = useAuth();
-  const { status: sessionStatus, data: session } = useSession();
-  const [message, setMessage] = useState('Loading application...');
 
   useEffect(() => {
-    if (pathname) {
-      setIsRouterReady(true);
+    if (!isLoaded) return;
+
+    // List of public routes that don't require authentication
+    const publicRoutes = [
+      routes.root.home,
+      routes.root.login,
+      routes.root.register,
+      routes.root.forgotPassword,
+      routes.root.resetPassword,
+      routes.root.verifyEmail,
+      '/api/webhook/clerk',
+      '/api/webhook/stripe',
+    ];
+
+    // If the user is not signed in and trying to access a protected route
+    if (!isSignedIn && !publicRoutes.includes(pathname as any)) {
+      router.push(routes.root.login);
     }
-  }, [pathname]);
+  }, [isLoaded, isSignedIn, pathname, router]);
 
-  useEffect(() => {
-    // Update loading message based on current state
-    if (sessionStatus === 'loading') {
-      setMessage('Checking your session...');
-    } else if (authLoading || isAuthChecking) {
-      setMessage('Loading your profile...');
-    } else if (!isRouterReady) {
-      setMessage('Preparing application...');
-    }
-  }, [sessionStatus, authLoading, isRouterReady, isAuthChecking]);
-
-  // Enhanced auth check with timeout
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
-    const performAuthCheck = async () => {
-      if (sessionStatus === 'authenticated' && !isAuthenticated && !isAuthChecking) {
-        setIsAuthChecking(true);
-        try {
-          await checkAuth();
-        } finally {
-          setIsAuthChecking(false);
-        }
-      }
-    };
-
-    // Set a timeout to prevent infinite loading
-    if (sessionStatus === 'authenticated' && !isAuthenticated) {
-      timeoutId = setTimeout(() => {
-        setIsAuthChecking(false);
-      }, 5000); // 5 second timeout
-      
-      performAuthCheck();
-    }
-
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [sessionStatus, isAuthenticated, checkAuth, isAuthChecking]);
-
-  // Prevent infinite loading by allowing render after timeout
-  const shouldShowLoading = !isRouterReady || 
-    sessionStatus === 'loading' || 
-    (authLoading && isAuthChecking);
-
-  if (shouldShowLoading) {
-    return <LoadingScreen message={message} />;
+  if (!isLoaded) {
+    return <LoadingScreen />;
   }
 
   return <>{children}</>;
-} 
+};
+
+export default PageStatusCheck; 

@@ -36,7 +36,7 @@ import {
   Flag as FlagIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
-import { ApiClient } from '@/lib/api/client';
+import { adminClient } from '@/lib/api/adminClient';
 import { ApiResponse } from '@/lib/api/types';
 
 // Define PaginatedResponse interface
@@ -48,7 +48,21 @@ interface PaginatedResponse<T> {
   data?: T[]; // Added for compatibility with existing API responses
 }
 
-// Define message interface - updated to match expected API response
+// Define API message interface
+interface ApiMessage {
+  id: string;
+  content: string;
+  createdAt: string | Date;
+  senderId: string;
+  recipientId: string;
+  sender?: { name: string; };
+  recipient?: { name: string; };
+  status?: string;
+  type?: string;
+  flags?: string[];
+}
+
+// Define UI message interface
 interface Message {
   id: string;
   from: string;
@@ -60,42 +74,6 @@ interface Message {
   type: string;
   flags: string[];
 }
-
-// We need to modify our approach to avoid conflicts with existing overloads
-// Instead of adding methods to ApiClient.prototype, we'll use wrapper functions
-
-// Wrapper for getting messages
-const getMessagesWrapper = async (params?: Record<string, string>): Promise<ApiResponse<PaginatedResponse<Message>>> => {
-  const apiClient = ApiClient.getInstance();
-  const response = await apiClient.get<PaginatedResponse<Message>>('/messages', { params });
-  // Construct a proper ApiResponse instead of type casting
-  return {
-    status: 'success',
-    data: response as PaginatedResponse<Message>
-  };
-};
-
-// Wrapper for deleting a message
-const deleteMessageWrapper = async (messageId: string): Promise<ApiResponse<any>> => {
-  const apiClient = ApiClient.getInstance();
-  const response = await apiClient.delete<any>(`/messages/${messageId}`);
-  // Construct a proper ApiResponse
-  return {
-    status: 'success',
-    data: response
-  };
-};
-
-// Wrapper for updating message status
-const updateMessageStatusWrapper = async (messageId: string, status: string): Promise<ApiResponse<any>> => {
-  const apiClient = ApiClient.getInstance();
-  const response = await apiClient.patch<any>(`/messages/${messageId}`, { status });
-  // Construct a proper ApiResponse
-  return {
-    status: 'success',
-    data: response
-  };
-};
 
 export default function AdminMessagesPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -119,24 +97,27 @@ export default function AdminMessagesPage() {
     try {
       setLoading(true);
       
-      const params: Record<string, string> = {};
+      const params: any = {
+        page: 1,
+        limit: 50
+      };
+      
       if (typeFilter !== 'ALL') params.type = typeFilter;
       if (statusFilter !== 'ALL') params.status = statusFilter;
       
-      const response = await getMessagesWrapper(params);
+      const response = await adminClient.getMessages(params);
       
       if (response.status === 'success') {
-        // Process messages from the paginated response
-        const messagesList = response.data.items || response.data.data || [];
-        setMessages(messagesList.map((msg: Message) => ({
+        // Map to UI format
+        setMessages((response.data.data || []).map((msg: ApiMessage) => ({
           id: msg.id,
-          from: msg.from,
-          to: msg.to,
-          subject: msg.subject,
+          from: msg.sender?.name || 'Unknown',
+          to: msg.recipient?.name || 'Unknown',
+          subject: msg.content.substring(0, 50),
           content: msg.content,
-          timestamp: msg.timestamp,
-          status: msg.status,
-          type: msg.type,
+          timestamp: new Date(msg.createdAt).toISOString(),
+          status: msg.status || 'ACTIVE',
+          type: msg.type || 'GENERAL',
           flags: msg.flags || []
         })));
         setError(null);
@@ -191,13 +172,13 @@ export default function AdminMessagesPage() {
       
       switch (action) {
         case 'delete':
-          response = await deleteMessageWrapper(messageId);
+          response = await adminClient.deleteMessage(messageId);
           break;
         case 'block':
-          response = await updateMessageStatusWrapper(messageId, 'BLOCKED');
+          response = await adminClient.updateMessageStatus(messageId, 'BLOCKED');
           break;
         case 'flag':
-          response = await updateMessageStatusWrapper(messageId, 'FLAGGED');
+          response = await adminClient.updateMessageStatus(messageId, 'FLAGGED');
           break;
       }
       

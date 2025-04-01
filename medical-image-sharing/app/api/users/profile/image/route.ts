@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../../auth/[...nextauth]/route';
+import { auth } from '@clerk/nextjs/server';
 import { getErrorResponse } from '@/lib/api/error-handler';
 import prisma from '@/lib/db';
 import { 
@@ -14,18 +13,31 @@ import {
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify user authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Verify user authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to upload a profile image' },
         { status: 401 }
       );
     }
 
+    // Get the user from the database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Not Found', message: 'User not found' },
+        { status: 404 }
+      );
+    }
+
     // Generate a unique filename for the profile image
     const filename = generateUniqueFilename('profile.jpg');
-    const key = `users/${session.user.id}/profile/${filename}`;
+    const key = `users/${user.id}/profile/${filename}`;
     
     // Get presigned URL from the backend
     const presignedUrlData = await getUploadUrl(
@@ -53,12 +65,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify user authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
+    // Verify user authentication using Clerk
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to upload a profile image' },
         { status: 401 }
+      );
+    }
+
+    // Get the user from the database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Not Found', message: 'User not found' },
+        { status: 404 }
       );
     }
 
@@ -75,7 +100,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Update the user's profile image in the database
     const updatedUser = await prisma.user.update({
-      where: { id: session.user.id },
+      where: { id: user.id },
       data: {
         image: fileKey,
         updatedAt: new Date(),
@@ -91,7 +116,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Log the profile image update for security auditing
     await prisma.securityLog.create({
       data: {
-        userId: session.user.id,
+        userId: user.id,
         action: 'PROFILE_IMAGE_UPDATED',
         ipAddress: req.headers.get('x-forwarded-for') || null,
         userAgent: req.headers.get('user-agent') || null,

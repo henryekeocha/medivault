@@ -13,8 +13,10 @@ import StatCard from '@/components/dashboard/StatCard';
 import UsageChart from '@/components/dashboard/UsageChart';
 import ActivityTimeline from '@/components/dashboard/ActivityTimeline';
 import TopUsersTable from '@/components/dashboard/TopUsersTable';
-import { ApiClient } from '@/lib/api/client';
-import { useToast } from '@/hooks/useToast'; 
+import { adminClient } from '@/lib/api/adminClient';
+import { sharedClient } from '@/lib/api/sharedClient';
+import { useToast } from '@/hooks/useToast';
+import { User, Role } from '@prisma/client';
 
 // Add type definitions for the response types
 interface StorageHistoryItem {
@@ -23,14 +25,11 @@ interface StorageHistoryItem {
   storageUsed: number;
 }
 
-interface TopUser {
-  id: string;
-  name: string;
-  department?: string;
-  role?: string;
-  storageUsed: number;
-  filesUploaded?: number;
-  avatar?: string;
+interface UserResponse extends User {
+  stats?: {
+    storageUsed: number;
+    filesCount: number;
+  };
 }
 
 interface ActivityLog {
@@ -47,16 +46,6 @@ interface FormattedActivity {
   action: string;
   time: string;
   avatar: string;
-}
-
-// Extend the ApiClient interface with proper return type for the get method
-declare module '@/lib/api/client' {
-  interface ApiClient {
-    get(url: string): Promise<{
-      ok: boolean;
-      json: () => Promise<any>;
-    }>;
-  }
 }
 
 export default function AdminStatsPage() {
@@ -125,8 +114,7 @@ export default function AdminStatsPage() {
 
   const fetchSystemMetrics = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getSystemMetrics();
+      const response = await adminClient.getSystemMetrics();
       
       if (response.status === 'success' && response.data) {
         const metrics = response.data;
@@ -167,27 +155,18 @@ export default function AdminStatsPage() {
 
   const fetchStorageHistory = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
+      const response = await adminClient.getStorageStats();
       
-      // Use type assertion to create a properly typed response
-      interface StorageHistoryResponse {
-        data: StorageHistoryItem[];
-      }
-      
-      const response = await apiClient.get('/analytics/storage/history');
-      
-      if (response.ok) {
-        const jsonData = await response.json() as StorageHistoryResponse;
+      if (response.status === 'success' && response.data) {
+        const storageData = response.data.history || [];
         
-        if (jsonData && jsonData.data) {
-          // Convert the data to TB and format for the chart
-          const formattedData = jsonData.data.map((item: StorageHistoryItem) => ({
-            name: item.month || item.date || '',
-            value: parseFloat((item.storageUsed / (1024 * 1024 * 1024 * 1024)).toFixed(2))
-          }));
-          
-          setStorageHistory(formattedData);
-        }
+        // Convert the data to TB and format for the chart
+        const formattedData = storageData.map((item: StorageHistoryItem) => ({
+          name: item.month || item.date || '',
+          value: parseFloat((item.storageUsed / (1024 * 1024 * 1024 * 1024)).toFixed(2))
+        }));
+        
+        setStorageHistory(formattedData);
       }
     } catch (error) {
       console.error('Error fetching storage history:', error);
@@ -198,8 +177,7 @@ export default function AdminStatsPage() {
 
   const fetchRecentActivity = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
-      const response = await apiClient.getActivityLogs({ limit: 5 });
+      const response = await adminClient.getActivityLogs({ limit: 5 });
       
       if (response.status === 'success' && response.data) {
         // Format the activity logs for the timeline component
@@ -222,31 +200,27 @@ export default function AdminStatsPage() {
 
   const fetchTopUsers = async () => {
     try {
-      const apiClient = ApiClient.getInstance();
+      const response = await adminClient.getUsers({ 
+        limit: 5,
+        sortBy: 'createdAt',
+        sortDirection: 'desc'
+      });
       
-      // Use type assertion to create a properly typed response
-      interface TopUsersResponse {
-        data: TopUser[];
-      }
-      
-      const response = await apiClient.get('/analytics/users/top-storage');
-      
-      if (response.ok) {
-        const jsonData = await response.json() as TopUsersResponse;
-        
-        if (jsonData && jsonData.data) {
-          // Format the user data for the table component
-          const formattedUsers = jsonData.data.map((user: TopUser) => ({
+      if (response.status === 'success' && response.data?.data) {
+        // Format the user data for the table component
+        const formattedUsers = response.data.data.map((user: any) => {
+          const userWithStats = user as UserResponse;
+          return {
             id: user.id,
-            name: user.name,
-            department: user.department || user.role || 'N/A',
-            storageUsed: `${parseFloat((user.storageUsed / (1024 * 1024)).toFixed(2))} MB`,
-            filesUploaded: user.filesUploaded || 0,
-            avatar: user.avatar || `/avatars/default.jpg`
-          }));
-          
-          setTopUsers(formattedUsers);
-        }
+            name: user.name || 'Unknown',
+            department: user.role || Role.PATIENT,
+            storageUsed: `${parseFloat(((userWithStats.stats?.storageUsed || 0) / (1024 * 1024)).toFixed(2))} MB`,
+            filesUploaded: userWithStats.stats?.filesCount || 0,
+            avatar: user.image || `/avatars/default.jpg`
+          };
+        });
+        
+        setTopUsers(formattedUsers);
       }
     } catch (error) {
       console.error('Error fetching top users:', error);

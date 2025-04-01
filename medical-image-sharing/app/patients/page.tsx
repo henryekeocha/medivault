@@ -23,6 +23,7 @@ import { useWebSocket } from '@/contexts/WebSocketContext';
 import { api } from '@/lib/api/api';
 import { useRouter } from 'next/navigation';
 import { Route } from 'next';
+import { useUser } from '@clerk/nextjs';
 
 interface Patient {
   id: string;
@@ -44,6 +45,7 @@ function PatientsPage() {
   const toast = useToast();
   const router = useRouter();
   const { socket, onMessage } = useWebSocket();
+  const { user } = useUser();
 
   const loadPatients = async () => {
     try {

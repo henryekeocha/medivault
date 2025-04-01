@@ -2,7 +2,7 @@ import { AppError } from '../utils/appError.js';
 import { WebSocketService } from './websocket.service.js';
 import { NotificationService } from './notification.service.js';
 import { EmailService } from './email.service.js';
-import { prisma } from '../lib/prisma.js';
+import prisma from '../lib/prisma.js';
 import { Appointment, AppointmentStatus, Prisma, Role, User } from '@prisma/client';
 import { AppointmentWithUsers } from '../types/models.js';
 
@@ -87,8 +87,7 @@ export class AppointmentService {
     // Create appointment
     const appointment = await prisma.appointment.create({
       data: {
-        startTime: datetime,
-        endTime: new Date(datetime.getTime() + DEFAULT_WORKING_HOURS.slotDuration * 60000),
+        datetime,
         patientId,
         doctorId,
         notes,
@@ -101,11 +100,28 @@ export class AppointmentService {
       }
     });
 
+    // Create AppointmentWithUsers for notifications
+    const appointmentWithUsers: AppointmentWithUsers = {
+      id: appointment.id,
+      startTime: appointment.datetime, // Map datetime to startTime for AppointmentWithUsers
+      endTime: new Date(appointment.datetime.getTime() + DEFAULT_WORKING_HOURS.slotDuration * 60000),
+      datetime: appointment.datetime, // Add datetime field for API compatibility
+      status: appointment.status,
+      patientId: appointment.patientId,
+      doctorId: appointment.doctorId,
+      notes: appointment.notes,
+      imageId: appointment.imageId,
+      createdAt: appointment.createdAt,
+      updatedAt: appointment.updatedAt,
+      patient: appointment.patient,
+      doctor: appointment.doctor
+    };
+
     // Send notifications
     await Promise.all([
-      this.notificationService.sendAppointmentNotification(appointment),
-      this.wsService.notifyAppointmentCreated(appointment),
-      this.emailService.sendAppointmentConfirmation(appointment)
+      this.notificationService.sendAppointmentNotification(appointmentWithUsers),
+      this.wsService.notifyAppointmentCreated(appointmentWithUsers),
+      this.emailService.sendAppointmentConfirmation(appointmentWithUsers)
     ]);
 
     return appointment;
@@ -136,7 +152,7 @@ export class AppointmentService {
     }
 
     // Check if the new time slot is available (if datetime is being updated)
-    if (data.datetime && data.datetime !== appointment.startTime) {
+    if (data.datetime && data.datetime !== appointment.datetime) {
       const isAvailable = await this.checkSlotAvailability(
         appointment.doctorId,
         data.datetime,
@@ -151,10 +167,7 @@ export class AppointmentService {
     const updatedAppointment = await prisma.appointment.update({
       where: { id },
       data: {
-        ...data,
-        endTime: data.datetime
-          ? new Date(data.datetime.getTime() + DEFAULT_WORKING_HOURS.slotDuration * 60000)
-          : appointment.endTime
+        ...data
       },
       include: {
         patient: true,
@@ -164,7 +177,24 @@ export class AppointmentService {
 
     // Handle notifications for status changes
     if (data.status && data.status !== appointment.status) {
-      await this.handleStatusChangeNotifications(updatedAppointment, data.status);
+      // Create AppointmentWithUsers for notifications
+      const updatedAppointmentWithUsers: AppointmentWithUsers = {
+        id: updatedAppointment.id,
+        startTime: updatedAppointment.datetime,
+        endTime: new Date(updatedAppointment.datetime.getTime() + DEFAULT_WORKING_HOURS.slotDuration * 60000),
+        datetime: updatedAppointment.datetime, // Add datetime field for API compatibility
+        status: updatedAppointment.status,
+        patientId: updatedAppointment.patientId,
+        doctorId: updatedAppointment.doctorId,
+        notes: updatedAppointment.notes,
+        imageId: updatedAppointment.imageId,
+        createdAt: updatedAppointment.createdAt,
+        updatedAt: updatedAppointment.updatedAt,
+        patient: updatedAppointment.patient,
+        doctor: updatedAppointment.doctor
+      };
+      
+      await this.handleStatusChangeNotifications(updatedAppointmentWithUsers, data.status);
     }
 
     return updatedAppointment;
@@ -186,7 +216,7 @@ export class AppointmentService {
       ...(role === 'PROVIDER' ? { doctorId: userId } : {}),
       ...(status ? { status: status as AppointmentStatus } : {}),
       ...(startDate && endDate ? {
-        startTime: {
+        datetime: {
           gte: startDate,
           lte: endDate
         }
@@ -203,7 +233,7 @@ export class AppointmentService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: {
-          startTime: 'desc'
+          datetime: 'desc'
         }
       }),
       prisma.appointment.count({ where })
@@ -233,7 +263,7 @@ export class AppointmentService {
     const existingAppointments = await prisma.appointment.findMany({
       where: {
         doctorId: providerId,
-        startTime: {
+        datetime: {
           gte: startDate,
           lte: endDate
         },
@@ -274,14 +304,14 @@ export class AppointmentService {
         OR: [
           {
             AND: [
-              { startTime: { lte: slotStart } },
-              { endTime: { gt: slotStart } }
+              { datetime: { lte: slotStart } },
+              { datetime: { gt: new Date(slotStart.getTime() - DEFAULT_WORKING_HOURS.slotDuration * 60000) } }
             ]
           },
           {
             AND: [
-              { startTime: { lt: slotEnd } },
-              { endTime: { gte: slotEnd } }
+              { datetime: { lt: slotEnd } },
+              { datetime: { gte: new Date(slotEnd.getTime() - DEFAULT_WORKING_HOURS.slotDuration * 60000) } }
             ]
           }
         ]
@@ -370,8 +400,8 @@ export class AppointmentService {
 
           // Check if slot conflicts with existing appointments
           const isConflicting = existingAppointments.some(appointment => {
-            const appointmentStart = new Date(appointment.startTime);
-            const appointmentEnd = new Date(appointment.endTime);
+            const appointmentStart = appointment.datetime;
+            const appointmentEnd = new Date(appointmentStart.getTime() + workingHours.slotDuration * 60000);
             return slotTime >= appointmentStart && slotTime < appointmentEnd;
           });
 

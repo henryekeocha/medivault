@@ -1,5 +1,5 @@
 import express from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js'; 
 import {
   sendMessage,
   getMessages,
@@ -7,6 +7,8 @@ import {
   deleteMessage,
   updateMessage,
   getConversations,
+  getMessageTemplates,
+  getMessageTemplateCategories
 } from '../controllers/message.controller.js';
 import { RequestHandler } from 'express';
 
@@ -16,11 +18,24 @@ const router = express.Router();
 router.use(protect);
 
 // Message routes
-router.post('/', sendMessage as RequestHandler);
-router.get('/', getMessages as RequestHandler);
-router.get('/conversations', getConversations as RequestHandler);
-router.get('/:id', getMessage as RequestHandler);
-router.patch('/:id', updateMessage as RequestHandler);
-router.delete('/:id', deleteMessage as RequestHandler);
+router.route('/')
+  .post(sendMessage)
+  .get(getMessages);
+
+router.route('/conversations')
+  .get(getConversations);
+
+// Message template routes - MUST come before /:id to avoid route conflicts
+router.route('/templates')
+  .get(getMessageTemplates as RequestHandler);
+
+router.route('/templates/categories')
+  .get(getMessageTemplateCategories as RequestHandler);
+
+// Single message route with ID parameter - MUST come after more specific routes
+router.route('/:id')
+  .get(getMessage)
+  .patch(updateMessage)
+  .delete(deleteMessage);
 
 export default router; 

@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { protect } from '../middleware/auth.js';
-import { restrictTo } from '../middleware/auth.js';
+import { protect } from '../middleware/clerk.js';
+import { restrictTo } from '../middleware/clerk.js';
 import { settingsController } from '../controllers/settings.controller.js';
 import { Role } from '@prisma/client';
 import type { RequestHandler } from 'express';

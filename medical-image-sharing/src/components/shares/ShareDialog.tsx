@@ -27,8 +27,7 @@ import {
   Add as AddIcon,
 } from '@mui/icons-material';
 import { ShareType, SharePermission } from '@prisma/client';
-import { apiClient } from '@/lib/api/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { providerClient } from '@/lib/api';
 
 interface ShareDialogProps {
   imageId: string;
@@ -36,7 +35,6 @@ interface ShareDialogProps {
 }
 
 export const ShareDialog: React.FC<ShareDialogProps> = ({ imageId, onClose }) => {
-  const { user } = useAuth();
   const [shareType, setShareType] = useState<ShareType>(ShareType.LINK);
   const [permissions, setPermissions] = useState<SharePermission>(SharePermission.VIEW);
   const [expiresAt, setExpiresAt] = useState<string>('');
@@ -54,37 +52,39 @@ export const ShareDialog: React.FC<ShareDialogProps> = ({ imageId, onClose }) =>
       setError('');
       setSuccess('');
 
-      // Validate the date before conversion
-      let formattedExpiresAt = undefined;
-      if (enableExpiration && expiresAt) {
-        const expiresAtDate = new Date(expiresAt);
-        if (!isNaN(expiresAtDate.getTime())) {
-          formattedExpiresAt = expiresAtDate;
+      if (shareType === ShareType.EMAIL && emailList.length === 0) {
+        setError('Please add at least one recipient email');
+        setLoading(false);
+        return;
+      }
+
+      // For email sharing, we need to share with each recipient
+      if (shareType === ShareType.EMAIL) {
+        const sharePromises = emailList.map(email => 
+          providerClient.shareImage(imageId, email)
+        );
+
+        const results = await Promise.all(sharePromises);
+        const hasErrors = results.some(result => result.status === 'error');
+        
+        if (hasErrors) {
+          throw new Error('Failed to share with some recipients');
+        }
+
+        setSuccess('Share invitations sent successfully!');
+      } else {
+        // For link sharing, we create a single share
+        const response = await providerClient.shareImage(imageId, 'public');
+
+        if (response.status === 'success') {
+          setSuccess('Share link created successfully');
+          setShareUrl(`${window.location.origin}/share/${response.data?.link}`);
         } else {
-          setError('Invalid expiration date');
-          setLoading(false);
-          return;
+          throw new Error(response.error?.message || 'Failed to create share');
         }
       }
-
-      const shareData = {
-        imageId,
-        type: shareType,
-        permissions,
-        expiresAt: formattedExpiresAt,
-        recipientEmails: shareType === ShareType.EMAIL ? emailList : undefined,
-      };
-
-      const response = await apiClient.createShare(shareData);
-      
-      if (shareType === ShareType.LINK) {
-        setShareUrl(`${window.location.origin}/share/${response.data.shareUrl}`);
-      } else {
-        setSuccess('Share invitations sent successfully!');
-      }
-    } catch (error) {
-      console.error('Failed to create share:', error);
-      setError('Failed to create share. Please try again.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create share');
     } finally {
       setLoading(false);
     }

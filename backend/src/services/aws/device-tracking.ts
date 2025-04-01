@@ -1,4 +1,4 @@
-import { prisma } from '../../lib/prisma.js';
+import prisma from '../../lib/prisma.js';
 import { logger } from '../../utils/logger.js';
 
 // Define types for our returned objects

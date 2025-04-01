@@ -1,103 +1,83 @@
-'use client';
-
-import React, { useEffect, useState, ReactNode } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import React, { useEffect } from 'react';
+import { useUser } from '@clerk/nextjs';
+import { useRouter } from 'next/navigation';
 import { Role } from '@prisma/client';
-import { SkeletonPage } from '@/components/SkeletonLoader';
+import { LoadingState } from './LoadingState';
+import { routes } from '@/config/routes';
+import type { Route } from 'next';
 
 interface ProtectedRouteProps {
-  children: ReactNode;
+  children: React.ReactNode;
   allowedRoles?: Role[];
   requireAuth?: boolean;
 }
 
-export default function ProtectedRoute({ children, allowedRoles, requireAuth = true }: ProtectedRouteProps) {
-  const { user, loading, isAuthenticated } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
+export function withProtectedRoute<P extends object>(
+  WrappedComponent: React.ComponentType<P>,
+  options: { allowedRoles?: Role[]; requireAuth?: boolean } = {}
+) {
+  return function ProtectedRoute(props: P) {
+    const { user, isLoaded } = useUser();
+    const router = useRouter();
 
-  useEffect(() => {
-    if (!loading) {
-      if (requireAuth && !isAuthenticated) {
-        // Store the attempted URL for redirect after login
-        if (pathname !== '/auth/login') {
-          router.push(`/auth/login?redirect=${encodeURIComponent(pathname)}`);
+    useEffect(() => {
+      if (isLoaded) {
+        // If authentication is required and user is not authenticated
+        if (options.requireAuth && !user) {
+          router.push(routes.root.login as Route);
+          return;
         }
-      } else if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-        // Redirect to appropriate dashboard if user doesn't have required role
-        switch (user.role) {
-          case 'ADMIN':
-            router.push('/admin/dashboard');
-            break;
-          case 'PROVIDER':
-            router.push('/provider/dashboard');
-            break;
-          case 'PATIENT':
-            router.push('/patient/dashboard');
-            break;
-          default:
-            router.push('/');
+
+        // If user is authenticated but doesn't have the required role
+        if (user && options.allowedRoles) {
+          const userRole = user.publicMetadata.role as Role;
+          
+          // If no role found, redirect to login with error
+          if (!userRole) {
+            router.push('/auth/login?error=no_role_found' as Route);
+            return;
+          }
+          
+          if (!options.allowedRoles.includes(userRole)) {
+            // Redirect to role-specific dashboard
+            if (userRole === Role.PATIENT) {
+              router.push('/dashboard' as Route);
+            } else if (userRole === Role.PROVIDER) {
+              router.push('/dashboard' as Route);
+            } else if (userRole === Role.ADMIN) {
+              router.push('/dashboard' as Route);
+            } else {
+              router.push('/unauthorized' as Route);
+            }
+            return;
+          }
         }
       }
+    }, [isLoaded, user, options.allowedRoles, options.requireAuth, router]);
+
+    if (!isLoaded) {
+      return <LoadingState fullScreen />;
     }
-  }, [loading, isAuthenticated, user, router, pathname, allowedRoles, requireAuth]);
 
-  // Show loading state
-  if (loading) {
-    return <SkeletonPage />;
-  }
+    // If authentication is required and user is not authenticated
+    if (options.requireAuth && !user) {
+      return null;
+    }
 
-  // Show 404 for unauthorized access
-  if (requireAuth && !isAuthenticated) {
-    return null;
-  }
-
-  // Show 403 for incorrect role
-  if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
-        <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
-        <p className="text-gray-600 mt-2">
-          You don't have permission to access this page.
-        </p>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
-}
-
-export function withProtectedRoute(
-  WrappedComponent: React.ComponentType<any>,
-  options: Omit<ProtectedRouteProps, 'children'> = {}
-) {
-  return function WithProtectedRouteWrapper(props: any) {
-    const [mounted, setMounted] = useState(false);
-    
-    // Add a delay to ensure the router is available
-    useEffect(() => {
-      const timer = setTimeout(() => {
-        setMounted(true);
-      }, 50);
+    // If user is authenticated but doesn't have the required role
+    if (user && options.allowedRoles) {
+      const userRole = user.publicMetadata.role as Role;
       
-      return () => clearTimeout(timer);
-    }, []);
-    
-    if (!mounted) {
-      return <SkeletonPage />;
+      // If no role found, return null
+      if (!userRole) {
+        return null;
+      }
+      
+      if (!options.allowedRoles.includes(userRole)) {
+        return null;
+      }
     }
-    
-    return (
-      <ProtectedRoute {...options}>
-        <WrappedComponent {...props} />
-      </ProtectedRoute>
-    );
-  };
-}
 
-// Example usage:
-// const ProtectedDashboard = withProtectedRoute(Dashboard, {
-//   allowedRoles: ['admin', 'doctor'],
-//   requireAuth: true,
-// }); 
+    return <WrappedComponent {...props} />;
+  };
+} 

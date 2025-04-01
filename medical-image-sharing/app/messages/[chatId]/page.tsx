@@ -18,7 +18,8 @@ import {
   Send as SendIcon,
   ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
-import { useAuth } from '@/contexts/AuthContext';
+import { useUser } from '@clerk/nextjs';
+import { withProtectedRoute } from '@/components/ProtectedRoute';
 import { format } from 'date-fns';
 import Link from 'next/link';
 import { getChatMessagesApi, getRecipientInfoApi, sendMessageApi } from '@/lib/api';
@@ -35,9 +36,14 @@ interface Message {
   };
 }
 
-export default function ChatPage() {
-  const { chatId } = useParams();
-  const { user } = useAuth();
+interface ChatParams {
+  chatId: string;
+}
+
+function ChatPage() {
+  const params = useParams();
+  const chatId = params?.chatId as string;
+  const { user } = useUser();
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -92,8 +98,8 @@ export default function ChatPage() {
       content: newMessage,
       sentAt: new Date().toISOString(),
       sender: {
-        username: user?.name || '',
-        role: user?.role || '',
+        username: user?.fullName || '',
+        role: user?.publicMetadata?.role as string || '',
       },
     };
 
@@ -248,10 +254,15 @@ export default function ChatPage() {
         onClose={() => setError(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert onClose={() => setError(null)} severity="error" sx={{ width: '100%' }}>
+        <Alert severity="error" onClose={() => setError(null)}>
           {error}
         </Alert>
       </Snackbar>
     </Container>
   );
-} 
+}
+
+export default withProtectedRoute(ChatPage, {
+  allowedRoles: ['PROVIDER', 'PATIENT'],
+  requireAuth: true,
+}); 

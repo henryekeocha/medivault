@@ -2,56 +2,65 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { Role } from '@prisma/client';
 import { DEFAULT_ROUTES } from '@/config/routes';
 import HomeContent from '@/components/landing/HomeContent';
 import { Route } from 'next';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, CircularProgress, Typography, Alert, Container, Paper, Button } from '@mui/material';
 
 export default function Home() {
-  const { data: session, status } = useSession();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { user, isLoaded: isUserLoaded } = useUser();
   const router = useRouter();
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Debug logging
-    console.log('Home page - Session status:', status);
-    console.log('Home page - Session data:', session);
+    console.log('Home page - Auth status:', isLoaded ? 'loaded' : 'loading');
+    console.log('Home page - User data:', user);
     
-    if (status === 'authenticated' && session?.user?.role && !isRedirecting) {
-      setIsRedirecting(true);
-      
-      try {
-        // Get the correct dashboard URL for the user's role
-        let dashboardUrl = '/dashboard';
+    // Only redirect if we're explicitly navigating to the dashboard
+    if (isLoaded && isUserLoaded && isSignedIn && user && !isRedirecting) {
+      const path = window.location.pathname;
+      if (path === '/dashboard' || path === '/') {
+        setIsRedirecting(true);
         
-        // Convert role to string to handle both string and enum values
-        const userRole = String(session.user.role).toUpperCase();
-        
-        if (userRole === 'ADMIN') {
-          dashboardUrl = '/admin/dashboard';
-        } else if (userRole === 'PROVIDER') {
-          dashboardUrl = '/provider/dashboard';
-        } else if (userRole === 'PATIENT') {
-          dashboardUrl = '/patient/dashboard';
-        }
-        
-        console.log(`User authenticated with role ${userRole}, redirecting to ${dashboardUrl}`);
-        
-        // Add a small delay to ensure routing works properly
-        setTimeout(() => {
-          router.push(dashboardUrl as Route);
-        }, 250);
-      } catch (error) {
-        console.error('Error during redirection:', error);
-        setIsRedirecting(false);
+        const handleRedirect = async () => {
+          try {
+            // Get the user's role from metadata
+            const userRole = user.unsafeMetadata?.role as Role;
+            console.log('User role from metadata:', userRole);
+            
+            if (userRole) {
+              const dashboardUrl = DEFAULT_ROUTES[userRole];
+              console.log(`User authenticated with role ${userRole}, redirecting to ${dashboardUrl}`);
+              
+              // Add a small delay to ensure routing works properly
+              setTimeout(() => {
+                router.push(dashboardUrl as Route);
+              }, 250);
+            } else {
+              console.error('No role found for authenticated user');
+              // Don't set a default role, show an error instead
+              setError('Your account is missing a role. Please contact support to resolve this issue.');
+              setIsRedirecting(false);
+            }
+          } catch (error) {
+            console.error('Error during redirection:', error);
+            setError('An error occurred while loading your account. Please try again.');
+            setIsRedirecting(false);
+          }
+        };
+
+        handleRedirect();
       }
     }
-  }, [session, status, router, isRedirecting]);
+  }, [isLoaded, isUserLoaded, isSignedIn, user, router, isRedirecting]);
 
-  // Show loading state while session is loading
-  if (status === 'loading' || isRedirecting) {
+  // Show loading state while auth is loading
+  if (!isLoaded || !isUserLoaded || isRedirecting) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
         <CircularProgress size={48} />
@@ -62,18 +71,30 @@ export default function Home() {
     );
   }
 
-  // If user is not authenticated, show the home page content
-  if (status === 'unauthenticated' || !session) {
-    return <HomeContent />;
+  // Show error message if there's an issue with the user's role
+  if (error) {
+    return (
+      <Container maxWidth="sm" sx={{ mt: 8 }}>
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Please contact support to resolve this issue.
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => window.location.href = '/auth/login'}
+            sx={{ mt: 2 }}
+          >
+            Sign Out
+          </Button>
+        </Paper>
+      </Container>
+    );
   }
 
-  // This should never be reached due to the redirect, but include as a fallback
-  return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-      <CircularProgress size={48} />
-      <Typography variant="h6" sx={{ mt: 2 }}>
-        Preparing your dashboard...
-      </Typography>
-    </Box>
-  );
+  // Show the home page content for both authenticated and unauthenticated users
+  return <HomeContent />;
 } 

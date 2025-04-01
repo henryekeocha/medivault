@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { auth } from '@clerk/nextjs/server';
 import prisma from '@/lib/prisma';
 import { validateRequest } from '@/lib/validation';
 import { hipaaLogger } from '@/lib/hipaa';
@@ -17,17 +16,27 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
     const appointment = await prisma.appointment.findUnique({
       where: {
         id: params.id,
         OR: [
-          { patientId: session.user.id },
-          { doctorId: session.user.id },
+          { patientId: user.id },
+          { doctorId: user.id },
         ],
       },
       include: {
@@ -65,7 +74,7 @@ export async function GET(
 
     await hipaaLogger.log({
       action: 'VIEW_APPOINTMENT',
-      userId: session.user.id,
+      userId: user.id,
       resourceId: appointment.id,
       details: `Viewed appointment details`,
     });
@@ -85,9 +94,19 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
     const data = await validateRequest(req, updateAppointmentSchema);
@@ -97,8 +116,8 @@ export async function PATCH(
       where: {
         id: params.id,
         OR: [
-          { patientId: session.user.id },
-          { doctorId: session.user.id },
+          { patientId: user.id },
+          { doctorId: user.id },
         ],
       },
     });
@@ -111,7 +130,7 @@ export async function PATCH(
     }
 
     // Validate permissions based on role and status change
-    if (session.user.role === 'PATIENT') {
+    if (user.role === 'PATIENT') {
       if (data.status && data.status !== 'CANCELLED') {
         return NextResponse.json(
           { error: 'Patients can only cancel appointments' },
@@ -152,7 +171,7 @@ export async function PATCH(
 
     await hipaaLogger.log({
       action: 'UPDATE_APPOINTMENT',
-      userId: session.user.id,
+      userId: user.id,
       resourceId: appointment.id,
       details: `Updated appointment status to ${data.status || 'no status change'}`,
     });
@@ -178,13 +197,23 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const { userId } = await auth();
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { authId: userId },
+      select: { id: true, role: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
     // Only providers can delete appointments
-    if (session.user.role !== 'PROVIDER') {
+    if (user.role !== 'PROVIDER') {
       return NextResponse.json(
         { error: 'Only providers can delete appointments' },
         { status: 403 }
@@ -194,7 +223,7 @@ export async function DELETE(
     const appointment = await prisma.appointment.findUnique({
       where: {
         id: params.id,
-        doctorId: session.user.id,
+        doctorId: user.id,
       },
     });
 
@@ -205,13 +234,21 @@ export async function DELETE(
       );
     }
 
+    // Prevent deleting past appointments
+    if (new Date(appointment.startTime) < new Date()) {
+      return NextResponse.json(
+        { error: 'Cannot delete past appointments' },
+        { status: 400 }
+      );
+    }
+
     await prisma.appointment.delete({
       where: { id: params.id },
     });
 
     await hipaaLogger.log({
       action: 'DELETE_APPOINTMENT',
-      userId: session.user.id,
+      userId: user.id,
       resourceId: appointment.id,
       details: `Deleted appointment`,
     });
